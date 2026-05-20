@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use serde::Serialize;
 use tauri::State;
 
-use crate::audio::MicCapture;
 use crate::audio::mic::MicLevel;
+use crate::audio::{MicCapture, SystemCapture, sck_available};
 use crate::sidecar::client::HealthInfo;
 use crate::state::AppState;
 
@@ -143,6 +143,65 @@ pub fn mic_record_stop(state: State<'_, AppState>) -> Result<Option<String>, Str
     };
     let p: Option<PathBuf> = mic.stop_recording().map_err(|e| e.to_string())?;
     Ok(p.map(|p| p.display().to_string()))
+}
+
+// ─── System audio commands (ScreenCaptureKit) ───────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct SystemAudioStatus {
+    pub available: bool,
+    pub running: bool,
+    pub rms: f32,
+}
+
+/// Returns true if ScreenCaptureKit is callable on this macOS version.
+#[tauri::command]
+pub fn system_audio_available() -> bool {
+    sck_available()
+}
+
+/// Start capturing system audio. macOS prompts for Screen Recording
+/// permission on first call.
+#[tauri::command]
+pub fn system_audio_start(state: State<'_, AppState>) -> Result<SystemAudioStatus, String> {
+    let slot = state.system_audio();
+    let mut guard = slot.lock();
+    if guard.is_none() {
+        let cap = SystemCapture::start().map_err(|e| e.to_string())?;
+        *guard = Some(cap);
+    }
+    let cap = guard.as_ref().expect("system capture exists");
+    Ok(SystemAudioStatus {
+        available: true,
+        running: true,
+        rms: cap.last_rms(),
+    })
+}
+
+#[tauri::command]
+pub fn system_audio_stop(state: State<'_, AppState>) -> Result<(), String> {
+    let slot = state.system_audio();
+    let mut guard = slot.lock();
+    *guard = None;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn system_audio_status(state: State<'_, AppState>) -> SystemAudioStatus {
+    let slot = state.system_audio();
+    let guard = slot.lock();
+    match guard.as_ref() {
+        Some(cap) => SystemAudioStatus {
+            available: true,
+            running: true,
+            rms: cap.last_rms(),
+        },
+        None => SystemAudioStatus {
+            available: sck_available(),
+            running: false,
+            rms: 0.0,
+        },
+    }
 }
 
 fn sanitize_filename(input: &str) -> String {
