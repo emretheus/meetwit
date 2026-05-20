@@ -1,7 +1,7 @@
-name: Build (manual)
+name: Build (release artifact)
 
-# Placeholder workflow — full Tauri build + code-sign + notarize pipeline arrives in Week 15.
-# Triggered manually only for now to avoid burning macOS minutes.
+# Manual trigger only — Tauri builds take 5-10 min on macOS runners.
+# Set the right secrets to enable code-signing + notarization.
 
 on:
   workflow_dispatch:
@@ -12,11 +12,84 @@ on:
         default: false
 
 jobs:
-  noop:
+  build:
+    name: Build Meetwit.app
     runs-on: macos-14
+    timeout-minutes: 60
+
+    env:
+      # Optional: set these as repo secrets to enable signing.
+      # APPLE_SIGNING_IDENTITY is read directly by Tauri.
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
     steps:
-      - name: Placeholder
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build deps (cmake for whisper.cpp)
+        run: brew install cmake
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install Python toolchain
+        run: uv python install 3.13
+
+      - name: Install Python deps
+        working-directory: backend
+        run: uv sync --extra dev
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Run sidecar build (PyInstaller --onedir)
+        working-directory: backend
+        run: uv run pyinstaller meetwit-sidecar.spec --noconfirm --clean
+
+      - name: Stage sidecar bundle
         run: |
-          echo "Tauri build pipeline lands in Week 15."
-          echo "Will assemble PyInstaller backend → bundle into .app → sign → notarize."
-          echo "sign input was: ${{ inputs.sign }}"
+          mkdir -p desktop/src-tauri/binaries
+          rm -rf desktop/src-tauri/binaries/python-backend
+          cp -R backend/dist/meetwit-sidecar desktop/src-tauri/binaries/python-backend
+
+      - name: Build Tauri .app + .dmg
+        run: pnpm tauri:build
+
+      - name: Notarize (if creds provided)
+        if: ${{ inputs.sign && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_PASSWORD != '' }}
+        run: |
+          DMG=$(find desktop/src-tauri/target/release/bundle/dmg -name '*.dmg' | head -1)
+          echo "Notarizing $DMG"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Meetwit-macos-arm64
+          path: |
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/release/bundle/macos/*.app
+          retention-days: 14

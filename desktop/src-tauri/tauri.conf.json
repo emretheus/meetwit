@@ -44,6 +44,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "binaries/python-backend": "python-backend"
+    },
     "macOS": {
       "minimumSystemVersion": "13.0",
       "frameworks": [],
