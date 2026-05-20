@@ -10,6 +10,9 @@ from fastapi import FastAPI
 
 from meetwit import __version__
 from meetwit.config import Settings, get_settings
+from meetwit.db import make_engine, run_migrations
+from meetwit.indexing import Embedder
+from meetwit.routers import knowledge
 
 log = structlog.get_logger()
 
@@ -18,8 +21,15 @@ log = structlog.get_logger()
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
     log.info("sidecar.startup", version=__version__, port=settings.port)
-    yield
-    log.info("sidecar.shutdown")
+    run_migrations(settings.db_path)
+    app.state.engine = make_engine(settings.db_path)
+    app.state.embedder = Embedder()
+    try:
+        yield
+    finally:
+        if engine := getattr(app.state, "engine", None):
+            await engine.dispose()
+        log.info("sidecar.shutdown")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -43,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def version() -> dict[str, str]:
         return {"version": __version__}
 
+    app.include_router(knowledge.router)
     return app
 
 

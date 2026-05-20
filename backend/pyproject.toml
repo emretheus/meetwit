@@ -17,6 +17,15 @@ dependencies = [
     "httpx==0.28.*",
     "structlog==24.*",
     "alembic==1.14.*",
+    "greenlet==3.*",  # required by sqlalchemy async on Python 3.13
+    # Document parsing
+    "pymupdf==1.25.*",
+    "python-docx==1.1.*",
+    "markdown-it-py==3.0.*",
+    # Embeddings
+    "sentence-transformers==3.3.*",
+    # Search
+    "rank-bm25==0.2.*",
 ]
 
 [project.optional-dependencies]
@@ -79,5 +88,13 @@ no_implicit_optional = true
 files = ["src/meetwit"]
 
 [[tool.mypy.overrides]]
-module = ["sqlite_vec.*"]
+module = [
+    "sqlite_vec.*",
+    "pymupdf.*",
+    "docx.*",
+    "sentence_transformers.*",
+    "markdown_it.*",
+    "rank_bm25.*",
+    "ollama.*",
+]
 ignore_missing_imports = true
