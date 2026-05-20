@@ -6,6 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 
+use crate::asr::AsrStreamer;
 use crate::audio::{AudioMixer, MicCapture, SystemCapture};
 use crate::sidecar::SidecarHandle;
 
@@ -15,6 +16,7 @@ pub struct AppState {
     mic: Arc<Mutex<Option<MicCapture>>>,
     system_audio: Arc<Mutex<Option<SystemCapture>>>,
     mixer: Arc<Mutex<Option<AudioMixer>>>,
+    asr: Arc<Mutex<Option<AsrStreamer>>>,
 }
 
 impl AppState {
@@ -36,5 +38,9 @@ impl AppState {
 
     pub fn mixer(&self) -> Arc<Mutex<Option<AudioMixer>>> {
         self.mixer.clone()
+    }
+
+    pub fn asr(&self) -> Arc<Mutex<Option<AsrStreamer>>> {
+        self.asr.clone()
     }
 }

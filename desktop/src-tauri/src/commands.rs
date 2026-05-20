@@ -1,10 +1,12 @@
 //! Tauri commands exposed to the frontend via `invoke()`.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
+use crate::asr::{AsrStreamer, ModelInfo, WhisperEngine, model_path};
 use crate::audio::mic::MicLevel;
 use crate::audio::{AudioMixer, MicCapture, MixerStats, SystemCapture, sck_available};
 use crate::sidecar::client::HealthInfo;
@@ -201,6 +203,121 @@ pub fn system_audio_status(state: State<'_, AppState>) -> SystemAudioStatus {
             running: false,
             rms: 0.0,
         },
+    }
+}
+
+// ─── ASR commands ───────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AsrStatus {
+    pub running: bool,
+    pub model: Option<String>,
+    pub model_present: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AsrModelStatus {
+    pub model: String,
+    pub label: String,
+    pub present: bool,
+    pub path: String,
+}
+
+#[tauri::command]
+pub fn asr_models() -> Vec<AsrModelStatus> {
+    let mut out = Vec::new();
+    for model in [
+        ModelInfo::TinyEn,
+        ModelInfo::BaseEn,
+        ModelInfo::SmallEn,
+        ModelInfo::MediumEn,
+    ] {
+        if let Some(path) = model_path(model) {
+            out.push(AsrModelStatus {
+                model: format!("{model:?}").to_lowercase(),
+                label: model.label().to_string(),
+                present: path.exists(),
+                path: path.display().to_string(),
+            });
+        }
+    }
+    out
+}
+
+/// Start streaming ASR using the chosen model. Requires the mixer to be
+/// running so it has a `voice_ring` to consume.
+#[tauri::command]
+pub fn asr_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    model: String,
+) -> Result<AsrStatus, String> {
+    let model_info = match model.as_str() {
+        "tiny-en" | "tinyen" | "tiny.en" => ModelInfo::TinyEn,
+        "base-en" | "baseen" | "base.en" => ModelInfo::BaseEn,
+        "small-en" | "smallen" | "small.en" => ModelInfo::SmallEn,
+        "medium-en" | "mediumen" | "medium.en" => ModelInfo::MediumEn,
+        other => return Err(format!("unknown model: {other}")),
+    };
+    let path = model_path(model_info).ok_or_else(|| "no user data dir".to_string())?;
+    if !path.exists() {
+        return Err(format!(
+            "model file missing — download {} to {}",
+            model_info.label(),
+            path.display()
+        ));
+    }
+
+    let voice_ring = {
+        let mixer_slot = state.mixer();
+        let mixer_guard = mixer_slot.lock();
+        let mixer = mixer_guard
+            .as_ref()
+            .ok_or_else(|| "mixer not running — start it first".to_string())?;
+        mixer.voice_ring()
+    };
+
+    let engine = Arc::new(WhisperEngine::from_path(&path).map_err(|e| e.to_string())?);
+
+    let asr_slot = state.asr();
+    let mut asr_guard = asr_slot.lock();
+    if asr_guard.is_some() {
+        return Ok(AsrStatus {
+            running: true,
+            model: Some(model_info.label().into()),
+            model_present: true,
+        });
+    }
+
+    let app_emit = app.clone();
+    let streamer = AsrStreamer::start(engine, voice_ring, move |seg| {
+        if let Err(err) = app_emit.emit("transcript-update", seg) {
+            log::warn!("emit transcript-update failed: {err}");
+        }
+    });
+    *asr_guard = Some(streamer);
+    log::info!("asr started with model {}", model_info.label());
+
+    Ok(AsrStatus {
+        running: true,
+        model: Some(model_info.label().into()),
+        model_present: true,
+    })
+}
+
+#[tauri::command]
+pub fn asr_stop(state: State<'_, AppState>) -> Result<(), String> {
+    *state.asr().lock() = None;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn asr_status(state: State<'_, AppState>) -> AsrStatus {
+    let running = state.asr().lock().is_some();
+    AsrStatus {
+        running,
+        model: None,
+        model_present: false,
     }
 }
 

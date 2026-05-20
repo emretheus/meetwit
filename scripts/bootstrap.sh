@@ -17,6 +17,7 @@ command -v cargo >/dev/null 2>&1 || missing+=("cargo")
 command -v node  >/dev/null 2>&1 || missing+=("node 22+ (nvm: https://nvm.sh)")
 command -v pnpm  >/dev/null 2>&1 || missing+=("pnpm 10+ (corepack enable && corepack prepare pnpm@10 --activate)")
 command -v uv    >/dev/null 2>&1 || missing+=("uv (brew install uv)")
+command -v cmake >/dev/null 2>&1 || missing+=("cmake (brew install cmake) — required to build whisper.cpp")
 
 if [ ${#missing[@]} -gt 0 ]; then
   echo "✗ Missing prerequisites:"
