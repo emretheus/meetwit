@@ -10,7 +10,7 @@ Meetwit listens to your live meetings, indexes your local company documents, and
 
 ## Status
 
-🚧 **Pre-alpha — Week 1 scaffolding.** Not yet usable. See [docs/](./docs/) for the architecture and roadmap.
+🟡 **Pre-alpha — V1 feature-complete, awaiting hardware acceptance.** All 16 weeks of the V1 plan have shipped. See [docs/V1_ACCEPTANCE.md](./docs/V1_ACCEPTANCE.md) for the test plan that gates the `v1.0.0` tag, and [docs/weekly/](./docs/weekly/) for week-by-week status. Roadmap in [ROADMAP.md](./ROADMAP.md), changelog in [CHANGELOG.md](./CHANGELOG.md).
 
 | Layer | Stack |
 |---|---|
@@ -42,10 +42,18 @@ Most meeting assistants (Otter, Granola, Fireflies) transcribe what was said. Me
 See [docs/BUILDING.md](./docs/BUILDING.md) for the full setup. Quick start:
 
 ```bash
-# Prerequisites: rustup, Node 22 (via nvm), uv, pnpm
+# Prerequisites: rustup, Node 22 (via nvm), uv, pnpm, cmake
 ./scripts/bootstrap.sh
-pnpm tauri dev
+pnpm tauri:dev
 ```
+
+Release build (`.app` + `.dmg`):
+
+```bash
+./scripts/build-release.sh
+```
+
+See [docs/SIGNING.md](./docs/SIGNING.md) for code-signing setup.
 
 ## Privacy
 

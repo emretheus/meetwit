@@ -78,9 +78,7 @@ async def trigger_process(
     async with Session(engine) as session:  # type: ignore[arg-type]
         m = await session.get(Meeting, meeting_id)
         if m is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found")
 
     pid = processes.register()
     progress = PostMeetingProgress()
@@ -134,9 +132,7 @@ async def list_decisions(
             stmt = stmt.where(Decision.project == project)
         rows = await session.execute(stmt.order_by(Decision.created_at.desc()))
         return [
-            DecisionOut(
-                id=d.id, meeting_id=d.meeting_id, text=d.text, project=d.project
-            )
+            DecisionOut(id=d.id, meeting_id=d.meeting_id, text=d.text, project=d.project)
             for d in rows.scalars().all()
         ]
 
@@ -178,9 +174,7 @@ class ActionItemPatch(BaseModel):
 
 
 @router.patch("/action-items/{item_id}", response_model=ActionItemOut)
-async def patch_action_item(
-    item_id: int, body: ActionItemPatch, request: Request
-) -> ActionItemOut:
+async def patch_action_item(item_id: int, body: ActionItemPatch, request: Request) -> ActionItemOut:
     engine = _engine(request)
     async with Session(engine) as session:  # type: ignore[arg-type]
         item = await session.get(ActionItem, item_id)
@@ -220,9 +214,7 @@ async def trigger_conflict_detection(
 
     async with Session(engine) as session:  # type: ignore[arg-type]
         if (await session.get(Meeting, meeting_id)) is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found")
 
     pid = processes.register()
     progress = ConflictProgress()
@@ -249,9 +241,7 @@ async def trigger_conflict_detection(
 async def list_conflicts(meeting_id: str, request: Request) -> list[ConflictOut]:
     engine = _engine(request)
     async with Session(engine) as session:  # type: ignore[arg-type]
-        rows = await session.execute(
-            select(Conflict).where(Conflict.meeting_id == meeting_id)
-        )
+        rows = await session.execute(select(Conflict).where(Conflict.meeting_id == meeting_id))
         return [
             ConflictOut(
                 id=c.id,

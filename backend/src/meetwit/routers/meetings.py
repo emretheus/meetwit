@@ -149,9 +149,7 @@ async def get_meeting(meeting_id: str, request: Request) -> dict[str, object]:
     async with Session(engine) as session:  # type: ignore[arg-type]
         m = await session.get(Meeting, meeting_id)
         if m is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found")
         rows = await session.execute(
             select(Transcript)
             .where(Transcript.meeting_id == meeting_id)
@@ -175,16 +173,12 @@ async def get_meeting(meeting_id: str, request: Request) -> dict[str, object]:
 
 
 @router.patch("/meetings/{meeting_id}", response_model=MeetingSummary)
-async def patch_meeting(
-    meeting_id: str, body: MeetingPatch, request: Request
-) -> MeetingSummary:
+async def patch_meeting(meeting_id: str, body: MeetingPatch, request: Request) -> MeetingSummary:
     engine = _engine(request)
     async with Session(engine) as session:  # type: ignore[arg-type]
         m = await session.get(Meeting, meeting_id)
         if m is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found")
         if body.title is not None:
             m.title = body.title
         if body.project is not None:
@@ -206,9 +200,7 @@ async def delete_meeting(meeting_id: str, request: Request) -> dict[str, object]
     async with Session(engine) as session:  # type: ignore[arg-type]
         m = await session.get(Meeting, meeting_id)
         if m is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found")
         await session.delete(m)
         await session.commit()
     return {"deleted": meeting_id}
@@ -225,9 +217,7 @@ async def append_transcripts(
     async with Session(engine) as session:  # type: ignore[arg-type]
         m = await session.get(Meeting, meeting_id)
         if m is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found")
         rows = [
             Transcript(
                 meeting_id=meeting_id,
@@ -257,9 +247,7 @@ async def live_ask(body: LiveAskRequest, request: Request) -> EventSourceRespons
         # Recent transcript window (the meeting's last `recent_seconds`).
         m = await session.get(Meeting, body.meeting_id)
         if m is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found")
         rows = await session.execute(
             select(Transcript)
             .where(Transcript.meeting_id == body.meeting_id)
@@ -276,9 +264,7 @@ async def live_ask(body: LiveAskRequest, request: Request) -> EventSourceRespons
     else:
         window = []
 
-    transcript_text = "\n".join(
-        f"[{s.audio_start:6.1f}s] {s.text}" for s in window
-    )
+    transcript_text = "\n".join(f"[{s.audio_start:6.1f}s] {s.text}" for s in window)
 
     chunks = await retriever.search(body.question, top_k=body.top_k_docs)
     sources_block = format_sources(chunks) if chunks else "(no relevant docs)"
