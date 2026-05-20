@@ -77,9 +77,14 @@ desktop/src-tauri/WixTools/
 # ─── Generated routes (TanStack Router) ──────────────────────────────────
 desktop/src/routeTree.gen.ts
 
-# ─── App runtime data (created by Meetwit) ───────────────────────────────
-models/
-audio/
+# ─── App runtime data (created by Meetwit at run time) ───────────────────
+# These live in ~/Library/Application Support/Meetwit/, not in the repo —
+# but if a developer copies one in, exclude it. Anchored to avoid matching
+# desktop/src-tauri/src/audio/ etc.
+/models/
+/backend/models/
+/audio/
+/backend/audio/
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal
