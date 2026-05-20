@@ -1,164 +1,97 @@
 import { useEffect, useState } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { MicControls } from '@/components/MicControls';
-import { SystemAudioControls } from '@/components/SystemAudioControls';
 import {
-  backendStatus,
-  onBackendFailed,
-  onBackendReady,
-  ping,
-  type BackendStatus,
-} from '@/lib/tauri';
+  knowledgeStats,
+  listActionItems,
+  listMeetings,
+  type ActionItemOut,
+  type KnowledgeStats,
+  type Meeting,
+} from '@/lib/backend';
 
 export const Route = createFileRoute('/')({
   component: HomePage,
 });
 
 function HomePage() {
-  const [pingResponse, setPingResponse] = useState<string | null>(null);
-  const [pingError, setPingError] = useState<string | null>(null);
-  const [pingLoading, setPingLoading] = useState(false);
-
-  const [backend, setBackend] = useState<BackendStatus | null>(null);
-  const [backendError, setBackendError] = useState<string | null>(null);
-
-  async function refreshBackend() {
-    try {
-      const status = await backendStatus();
-      setBackend(status);
-      setBackendError(null);
-    } catch (err) {
-      setBackendError(err instanceof Error ? err.message : String(err));
-    }
-  }
+  const [stats, setStats] = useState<KnowledgeStats | null>(null);
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [openTasks, setOpenTasks] = useState<ActionItemOut[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Refresh once on mount.
-    void refreshBackend();
-
-    // Listen for sidecar lifecycle events from the Rust core.
-    const unlisten: Array<Promise<() => void>> = [
-      onBackendReady(() => {
-        void refreshBackend();
-      }),
-      onBackendFailed((msg) => {
-        setBackendError(msg);
-      }),
-    ];
-    return () => {
-      unlisten.forEach((p) => void p.then((fn) => fn()));
-    };
+    void (async () => {
+      try {
+        const [s, ms, ts] = await Promise.all([
+          knowledgeStats(),
+          listMeetings(),
+          listActionItems({ status_filter: 'open' }),
+        ]);
+        setStats(s);
+        setMeetings(ms);
+        setOpenTasks(ts);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
   }, []);
 
-  async function handlePing() {
-    setPingLoading(true);
-    setPingError(null);
-    try {
-      const result = await ping();
-      setPingResponse(result);
-    } catch (err) {
-      setPingError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setPingLoading(false);
-    }
-  }
-
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-start gap-6 px-6 py-12">
-      <header className="w-full">
-        <h1 className="text-3xl font-semibold tracking-tight">Meetwit</h1>
+    <div className="px-8 py-6">
+      <header>
+        <h1 className="text-2xl font-semibold">Welcome to Meetwit</h1>
         <p className="mt-1 text-sm text-neutral-400">
-          Privacy-first AI meeting assistant — pre-alpha scaffold.
+          Privacy-first AI meeting assistant.
         </p>
         <Link
           to="/meeting/live"
-          className="mt-4 inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-500"
+          className="mt-4 inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-500"
         >
           ● Start Live Meeting
         </Link>
       </header>
 
-      <section className="w-full rounded-lg border border-neutral-800 bg-neutral-900/50 p-5">
-        <h2 className="text-sm font-medium text-neutral-300">Backend</h2>
-        <p className="mt-1 text-xs text-neutral-500">
-          The auto-spawned Python sidecar.
-        </p>
+      <div className="mt-8 grid grid-cols-4 gap-3 text-sm">
+        <Stat label="Indexed docs" value={stats?.indexed_count ?? 0} />
+        <Stat label="Chunks" value={stats?.chunk_count ?? 0} />
+        <Stat label="Meetings" value={meetings.length} />
+        <Stat label="Open tasks" value={openTasks.length} />
+      </div>
 
-        <BackendBadge backend={backend} error={backendError} />
-
-        <button
-          type="button"
-          onClick={() => void refreshBackend()}
-          className="mt-3 rounded-md border border-neutral-700 bg-neutral-800 px-2.5 py-1 text-xs text-neutral-300 transition hover:bg-neutral-700"
-        >
-          Refresh
-        </button>
-      </section>
-
-      <MicControls />
-
-      <SystemAudioControls />
-
-      <section className="w-full rounded-lg border border-neutral-800 bg-neutral-900/50 p-5">
-        <h2 className="text-sm font-medium text-neutral-300">Tauri IPC smoke test</h2>
-        <p className="mt-1 text-xs text-neutral-500">
-          Calls <code className="rounded bg-neutral-800 px-1 py-0.5">invoke(&quot;ping&quot;)</code>{' '}
-          to verify the Rust ↔ webview bridge.
-        </p>
-        <button
-          type="button"
-          onClick={handlePing}
-          disabled={pingLoading}
-          className="mt-4 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {pingLoading ? 'Pinging…' : 'Ping Rust core'}
-        </button>
-
-        {pingResponse !== null && (
-          <p className="mt-3 text-sm text-brand-500">✓ {pingResponse}</p>
-        )}
-        {pingError !== null && (
-          <p className="mt-3 text-sm text-red-400">✗ {pingError}</p>
+      <section className="mt-8">
+        <h2 className="text-sm font-medium">Recent meetings</h2>
+        {meetings.length === 0 ? (
+          <p className="mt-2 text-sm text-neutral-500">No meetings yet.</p>
+        ) : (
+          <ul className="mt-3 space-y-1.5">
+            {meetings.slice(0, 5).map((m) => (
+              <li key={m.id}>
+                <Link
+                  to="/meeting/$id/summary"
+                  params={{ id: m.id }}
+                  className="flex items-center justify-between rounded border border-neutral-800 bg-neutral-900/50 px-3 py-2 text-sm hover:bg-neutral-900"
+                >
+                  <span className="font-medium">{m.title ?? 'Untitled meeting'}</span>
+                  <span className="text-xs text-neutral-500">
+                    {new Date(m.started_at).toLocaleString()} · {m.transcript_count} segments
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
-    </main>
+
+      {error && <p className="mt-4 text-sm text-red-400">✗ {error}</p>}
+    </div>
   );
 }
 
-function BackendBadge({
-  backend,
-  error,
-}: {
-  backend: BackendStatus | null;
-  error: string | null;
-}) {
-  if (error) {
-    return (
-      <p className="mt-3 text-sm text-red-400">
-        ✗ {error}
-      </p>
-    );
-  }
-  if (!backend) {
-    return (
-      <p className="mt-3 text-sm text-neutral-500">
-        … waiting
-      </p>
-    );
-  }
-  if (backend.running && backend.health) {
-    return (
-      <p className="mt-3 text-sm text-brand-500">
-        ✓ healthy ·{' '}
-        <span className="text-neutral-400">
-          {backend.base_url} · v{backend.health.version}
-        </span>
-      </p>
-    );
-  }
+function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <p className="mt-3 text-sm text-amber-400">
-      ⌛ {backend.error ?? 'starting…'}
-    </p>
+    <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-3">
+      <div className="text-xs text-neutral-500">{label}</div>
+      <div className="mt-1 text-lg font-medium">{value}</div>
+    </div>
   );
 }
