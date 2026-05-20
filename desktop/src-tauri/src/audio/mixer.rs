@@ -26,14 +26,16 @@ pub const WINDOW_SAMPLES: usize = (TARGET_SAMPLE_RATE as usize) / 20;
 /// Duck system audio to this fraction when the mic is active.
 const DUCK_GAIN: f32 = 0.25;
 /// Mic-RMS threshold that engages ducking.
-const DUCK_RMS_THRESHOLD: f32 = 0.02;
+const DUCK_RMS_THRESHOLD: f32 = 0.008;
 
-/// VAD on threshold (RMS). Tuned for typical headset mic levels.
-const VAD_RMS_ON: f32 = 0.015;
+/// VAD on threshold (RMS). Tuned down for built-in MacBook mics (quieter
+/// than headsets). Roughly equivalent to "audible speech 30+ cm from the
+/// laptop". Tunable per user in Settings (V1.1).
+const VAD_RMS_ON: f32 = 0.005;
 /// VAD off threshold (RMS) — hysteresis prevents flapping.
-const VAD_RMS_OFF: f32 = 0.008;
+const VAD_RMS_OFF: f32 = 0.0025;
 /// Frames of silence before we declare voice over.
-const VAD_HANG_FRAMES: u32 = 6; // ~300 ms at 50 ms windows
+const VAD_HANG_FRAMES: u32 = 10; // ~500 ms at 50 ms windows — longer pause tolerance
 
 #[derive(Debug, Default, Clone, Copy, serde::Serialize)]
 pub struct MixerStats {
@@ -160,6 +162,7 @@ fn run_loop(
             let mix_rms = rms(&mixed);
 
             // Energy VAD with hysteresis.
+            let was_active = vad_active;
             if vad_active {
                 if mix_rms < VAD_RMS_OFF {
                     silent_frames += 1;
@@ -172,6 +175,25 @@ fn run_loop(
             } else if mix_rms > VAD_RMS_ON {
                 vad_active = true;
                 silent_frames = 0;
+            }
+
+            // Log VAD transitions + a periodic level sample so users can see
+            // why no transcript is appearing (mic too quiet, threshold too high).
+            if vad_active != was_active {
+                log::info!(
+                    "mixer.vad {} mic_rms={:.4} sys_rms={:.4} mix_rms={:.4}",
+                    if vad_active { "ON" } else { "off" },
+                    mic_rms,
+                    sys_rms,
+                    mix_rms,
+                );
+            }
+            if windows_processed % 200 == 0 {
+                // ~10s heartbeat at 50ms windows
+                log::debug!(
+                    "mixer.heartbeat windows={windows_processed} voice={voice_windows} \
+                     mic_rms={mic_rms:.4} mix_rms={mix_rms:.4} vad={vad_active}"
+                );
             }
 
             out.push(&mixed);

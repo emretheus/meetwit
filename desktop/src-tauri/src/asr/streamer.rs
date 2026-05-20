@@ -17,8 +17,11 @@ use super::engine::WhisperEngine;
 use crate::audio::ring::SampleRing;
 use crate::audio::wav::TARGET_SAMPLE_RATE;
 
-const WINDOW_SECS: usize = 25;
-const OVERLAP_SECS: usize = 3;
+// Window size = how long ASR waits before producing its first transcript.
+// 10s = transcripts within ~10s of speech onset (plus whisper compute time).
+// Larger = better context for whisper but worse perceived latency.
+const WINDOW_SECS: usize = 10;
+const OVERLAP_SECS: usize = 2;
 const WINDOW_SAMPLES: usize = WINDOW_SECS * TARGET_SAMPLE_RATE as usize;
 const OVERLAP_SAMPLES: usize = OVERLAP_SECS * TARGET_SAMPLE_RATE as usize;
 
@@ -76,15 +79,28 @@ where
 {
     let mut buf: Vec<f32> = Vec::with_capacity(WINDOW_SAMPLES + OVERLAP_SAMPLES);
     let mut window_origin_seconds: f64 = 0.0;
+    let mut last_heartbeat = std::time::Instant::now();
 
     while !stop.load(Ordering::SeqCst) {
         buf.extend(ring.drain());
 
         if buf.len() < WINDOW_SAMPLES {
+            // Periodic heartbeat so users know ASR is alive but waiting on
+            // voice-detected audio.
+            if last_heartbeat.elapsed() > Duration::from_secs(5) {
+                log::info!(
+                    "asr.waiting buffered={} need={WINDOW_SAMPLES} ({:.1}s of voice required)",
+                    buf.len(),
+                    WINDOW_SAMPLES as f64 / f64::from(crate::audio::wav::TARGET_SAMPLE_RATE),
+                );
+                last_heartbeat = std::time::Instant::now();
+            }
             thread::sleep(Duration::from_millis(250));
             continue;
         }
 
+        log::info!("asr.window_ready samples={} — running whisper.transcribe", WINDOW_SAMPLES);
+        let t0 = std::time::Instant::now();
         let window: Vec<f32> = buf[..WINDOW_SAMPLES].to_vec();
 
         let segments = match engine.transcribe(&window) {
@@ -95,6 +111,11 @@ where
                 continue;
             }
         };
+        log::info!(
+            "asr.transcribed segments={} latency={}ms",
+            segments.len(),
+            t0.elapsed().as_millis()
+        );
 
         for seg in segments {
             on_segment(TranscriptSegment {

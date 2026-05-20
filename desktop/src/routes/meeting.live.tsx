@@ -67,7 +67,15 @@ function LiveMeeting() {
       }
 
       await mixerStart();
-      await asrStart('tiny.en');
+      // small.en is the V1 default — ~5x slower than tiny.en but much more
+      // accurate. If users have only tiny.en downloaded we fall back below.
+      try {
+        await asrStart('small.en');
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('small.en not available, falling back to tiny.en:', err);
+        await asrStart('tiny.en');
+      }
 
       const unlisten = await onTranscriptUpdate((seg) => {
         setSegments((s) => [...s, { ...seg, meetingId: m.id }]);
