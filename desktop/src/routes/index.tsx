@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { MicControls } from '@/components/MicControls';
 import { SystemAudioControls } from '@/components/SystemAudioControls';
 import {
@@ -65,11 +65,17 @@ function HomePage() {
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-start gap-6 px-6 py-12">
-      <header>
+      <header className="w-full">
         <h1 className="text-3xl font-semibold tracking-tight">Meetwit</h1>
         <p className="mt-1 text-sm text-neutral-400">
           Privacy-first AI meeting assistant — pre-alpha scaffold.
         </p>
+        <Link
+          to="/meeting/live"
+          className="mt-4 inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-500"
+        >
+          ● Start Live Meeting
+        </Link>
       </header>
 
       <section className="w-full rounded-lg border border-neutral-800 bg-neutral-900/50 p-5">

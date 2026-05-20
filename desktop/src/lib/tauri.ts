@@ -92,3 +92,60 @@ export async function systemAudioStop(): Promise<void> {
 export async function systemAudioStatus(): Promise<SystemAudioStatus> {
   return invoke<SystemAudioStatus>('system_audio_status');
 }
+
+// ─── ASR ──────────────────────────────────────────────────────────────
+
+export interface TranscriptSegment {
+  text: string;
+  audio_start: number;
+  audio_end: number;
+  speaker: string | null;
+}
+
+export async function onTranscriptUpdate(
+  handler: (seg: TranscriptSegment) => void,
+): Promise<UnlistenFn> {
+  return listen<TranscriptSegment>('transcript-update', (e) => handler(e.payload));
+}
+
+export async function asrStart(model: string): Promise<{ running: boolean; model: string | null }> {
+  return invoke('asr_start', { model });
+}
+
+export async function asrStop(): Promise<void> {
+  return invoke('asr_stop');
+}
+
+export interface AsrModel {
+  model: string;
+  label: string;
+  present: boolean;
+  path: string;
+}
+
+export async function asrModels(): Promise<AsrModel[]> {
+  return invoke<AsrModel[]>('asr_models');
+}
+
+// ─── Mixer ────────────────────────────────────────────────────────────
+
+export interface MixerStats {
+  windows_processed: number;
+  voice_windows: number;
+  last_mix_rms: number;
+  mic_rms: number;
+  system_rms: number;
+  is_voice: boolean;
+}
+
+export async function mixerStart(): Promise<{ running: boolean; stats: MixerStats }> {
+  return invoke('mixer_start');
+}
+
+export async function mixerStop(): Promise<void> {
+  return invoke('mixer_stop');
+}
+
+export async function mixerStatus(): Promise<{ running: boolean; stats: MixerStats }> {
+  return invoke('mixer_status');
+}
