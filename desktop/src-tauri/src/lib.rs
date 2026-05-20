@@ -67,6 +67,9 @@ pub fn run() {
             commands::system_audio_start,
             commands::system_audio_stop,
             commands::system_audio_status,
+            commands::mixer_start,
+            commands::mixer_stop,
+            commands::mixer_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

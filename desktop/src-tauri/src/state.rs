@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 
-use crate::audio::{MicCapture, SystemCapture};
+use crate::audio::{AudioMixer, MicCapture, SystemCapture};
 use crate::sidecar::SidecarHandle;
 
 #[derive(Default)]
@@ -14,6 +14,7 @@ pub struct AppState {
     sidecar: OnceLock<SidecarHandle>,
     mic: Arc<Mutex<Option<MicCapture>>>,
     system_audio: Arc<Mutex<Option<SystemCapture>>>,
+    mixer: Arc<Mutex<Option<AudioMixer>>>,
 }
 
 impl AppState {
@@ -31,5 +32,9 @@ impl AppState {
 
     pub fn system_audio(&self) -> Arc<Mutex<Option<SystemCapture>>> {
         self.system_audio.clone()
+    }
+
+    pub fn mixer(&self) -> Arc<Mutex<Option<AudioMixer>>> {
+        self.mixer.clone()
     }
 }
