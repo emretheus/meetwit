@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from meetwit import __version__
 from meetwit.config import Settings, get_settings
@@ -46,6 +47,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=_lifespan,
     )
     app.state.settings = settings
+
+    # CORS — the Tauri WebView runs at a different origin (tauri://localhost
+    # in production, http://localhost:1420 in `tauri:dev`) than the sidecar,
+    # so the browser issues OPTIONS preflights on POST/PATCH/DELETE. Without
+    # CORS middleware FastAPI returns 405 and the request is blocked.
+    # Sidecar is bound to 127.0.0.1 already (loopback only), so allow_origins=*
+    # here doesn't expand attack surface — only loopback-local processes can
+    # reach this port in the first place.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/health")
     async def health() -> dict[str, object]:
