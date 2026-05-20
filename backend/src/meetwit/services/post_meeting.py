@@ -58,9 +58,7 @@ class PostMeetingProgress:
 
 
 def _format_transcript(rows: list[Transcript]) -> str:
-    return "\n".join(
-        f"[{r.audio_start:6.1f}s] {r.speaker or 'Speaker'}: {r.text}" for r in rows
-    )
+    return "\n".join(f"[{r.audio_start:6.1f}s] {r.speaker or 'Speaker'}: {r.text}" for r in rows)
 
 
 async def process_meeting(
@@ -153,9 +151,7 @@ async def process_meeting(
             schema_cls=ActionItemList,
         )
         async with Session(engine) as session:
-            await session.execute(
-                delete(ActionItem).where(ActionItem.meeting_id == meeting_id)
-            )
+            await session.execute(delete(ActionItem).where(ActionItem.meeting_id == meeting_id))
             for a in actions.action_items:
                 if a.task.strip():
                     session.add(

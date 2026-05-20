@@ -87,16 +87,11 @@ async def detect_conflicts(
             return progress
 
         retriever = HybridRetriever(engine, embedder)
-        batches = [
-            transcripts[i : i + BATCH_SIZE]
-            for i in range(0, len(transcripts), BATCH_SIZE)
-        ]
+        batches = [transcripts[i : i + BATCH_SIZE] for i in range(0, len(transcripts), BATCH_SIZE)]
         progress.batches_total = len(batches)
 
         for batch in batches:
-            batch_text = "\n".join(
-                f"[{s.audio_start:6.1f}s] {s.text}" for s in batch
-            )
+            batch_text = "\n".join(f"[{s.audio_start:6.1f}s] {s.text}" for s in batch)
             chunks = await retriever.search(batch_text, top_k=TOP_K_DOCS)
             sources = format_sources(chunks) if chunks else "(no relevant policy docs)"
 
