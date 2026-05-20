@@ -176,7 +176,7 @@ function Onboarding() {
             </a>
             , then run:
           </p>
-          <pre className="rounded bg-neutral-950 p-3 text-xs">{`ollama pull qwen2.5:7b-instruct`}</pre>
+          <pre className="rounded bg-neutral-950 p-3 text-xs">{`ollama pull qwen2.5:3b-instruct`}</pre>
           <div className="flex gap-2">
             <button
               type="button"
