@@ -163,7 +163,15 @@ public func meetwit_sck_start(
         }
         sem.signal()
     }
-    sem.wait()
+    // If SCK is blocked on a TCC permission prompt (user hasn't granted
+    // Screen Recording yet) the start() call can hang for many seconds —
+    // sometimes indefinitely until the dialog is dismissed. We don't want
+    // to freeze the calling Rust thread, so wait at most 3 seconds and
+    // surface that as "timed out" to the caller.
+    let timeout: DispatchTime = .now() + .seconds(3)
+    if sem.wait(timeout: timeout) == .timedOut {
+        return 3  // 3 = timeout — caller should fall back to mic-only
+    }
     return resultCode
 }
 
@@ -175,6 +183,7 @@ public func meetwit_sck_stop() -> Int32 {
         await SystemAudioTap.shared.stop()
         sem.signal()
     }
-    sem.wait()
+    let timeout: DispatchTime = .now() + .seconds(2)
+    _ = sem.wait(timeout: timeout)
     return 0
 }

@@ -95,7 +95,13 @@ impl SystemCapture {
         if rc != 0 {
             // Reclaim leaked Arc before returning.
             unsafe { drop(Arc::from_raw(user_data as *const SystemShared)) };
-            bail!("meetwit_sck_start failed with code {rc}");
+            let reason = match rc {
+                1 => "ScreenCaptureKit unavailable (needs macOS 13+)",
+                2 => "ScreenCaptureKit start failed — check Screen Recording permission",
+                3 => "ScreenCaptureKit timed out — likely waiting on TCC permission prompt",
+                _ => "ScreenCaptureKit returned unknown error",
+            };
+            bail!("meetwit_sck_start failed ({rc}): {reason}");
         }
 
         log::info!("system_audio: SCK capture started");
