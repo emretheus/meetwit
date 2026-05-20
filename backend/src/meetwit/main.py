@@ -13,7 +13,7 @@ from meetwit.config import Settings, get_settings
 from meetwit.db import make_engine, run_migrations
 from meetwit.indexing import Embedder
 from meetwit.llm import OllamaProvider
-from meetwit.routers import knowledge, meetings, memory
+from meetwit.routers import knowledge, meetings, memory, post_meeting
 
 log = structlog.get_logger()
 
@@ -58,6 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(knowledge.router)
     app.include_router(memory.router)
     app.include_router(meetings.router)
+    app.include_router(post_meeting.router)
     return app
 
 
