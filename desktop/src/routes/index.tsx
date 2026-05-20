@@ -1,26 +1,63 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
-import { ping } from '@/lib/tauri';
+import {
+  backendStatus,
+  onBackendFailed,
+  onBackendReady,
+  ping,
+  type BackendStatus,
+} from '@/lib/tauri';
 
 export const Route = createFileRoute('/')({
   component: HomePage,
 });
 
 function HomePage() {
-  const [response, setResponse] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [pingResponse, setPingResponse] = useState<string | null>(null);
+  const [pingError, setPingError] = useState<string | null>(null);
+  const [pingLoading, setPingLoading] = useState(false);
+
+  const [backend, setBackend] = useState<BackendStatus | null>(null);
+  const [backendError, setBackendError] = useState<string | null>(null);
+
+  async function refreshBackend() {
+    try {
+      const status = await backendStatus();
+      setBackend(status);
+      setBackendError(null);
+    } catch (err) {
+      setBackendError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  useEffect(() => {
+    // Refresh once on mount.
+    void refreshBackend();
+
+    // Listen for sidecar lifecycle events from the Rust core.
+    const unlisten: Array<Promise<() => void>> = [
+      onBackendReady(() => {
+        void refreshBackend();
+      }),
+      onBackendFailed((msg) => {
+        setBackendError(msg);
+      }),
+    ];
+    return () => {
+      unlisten.forEach((p) => void p.then((fn) => fn()));
+    };
+  }, []);
 
   async function handlePing() {
-    setLoading(true);
-    setError(null);
+    setPingLoading(true);
+    setPingError(null);
     try {
       const result = await ping();
-      setResponse(result);
+      setPingResponse(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setPingError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      setPingLoading(false);
     }
   }
 
@@ -34,6 +71,23 @@ function HomePage() {
       </header>
 
       <section className="w-full rounded-lg border border-neutral-800 bg-neutral-900/50 p-5">
+        <h2 className="text-sm font-medium text-neutral-300">Backend</h2>
+        <p className="mt-1 text-xs text-neutral-500">
+          The auto-spawned Python sidecar.
+        </p>
+
+        <BackendBadge backend={backend} error={backendError} />
+
+        <button
+          type="button"
+          onClick={() => void refreshBackend()}
+          className="mt-3 rounded-md border border-neutral-700 bg-neutral-800 px-2.5 py-1 text-xs text-neutral-300 transition hover:bg-neutral-700"
+        >
+          Refresh
+        </button>
+      </section>
+
+      <section className="w-full rounded-lg border border-neutral-800 bg-neutral-900/50 p-5">
         <h2 className="text-sm font-medium text-neutral-300">Tauri IPC smoke test</h2>
         <p className="mt-1 text-xs text-neutral-500">
           Calls <code className="rounded bg-neutral-800 px-1 py-0.5">invoke(&quot;ping&quot;)</code>{' '}
@@ -42,23 +96,57 @@ function HomePage() {
         <button
           type="button"
           onClick={handlePing}
-          disabled={loading}
+          disabled={pingLoading}
           className="mt-4 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? 'Pinging…' : 'Ping Rust core'}
+          {pingLoading ? 'Pinging…' : 'Ping Rust core'}
         </button>
 
-        {response !== null && (
-          <p className="mt-3 text-sm text-brand-500">
-            ✓ {response}
-          </p>
+        {pingResponse !== null && (
+          <p className="mt-3 text-sm text-brand-500">✓ {pingResponse}</p>
         )}
-        {error !== null && (
-          <p className="mt-3 text-sm text-red-400">
-            ✗ {error}
-          </p>
+        {pingError !== null && (
+          <p className="mt-3 text-sm text-red-400">✗ {pingError}</p>
         )}
       </section>
     </main>
+  );
+}
+
+function BackendBadge({
+  backend,
+  error,
+}: {
+  backend: BackendStatus | null;
+  error: string | null;
+}) {
+  if (error) {
+    return (
+      <p className="mt-3 text-sm text-red-400">
+        ✗ {error}
+      </p>
+    );
+  }
+  if (!backend) {
+    return (
+      <p className="mt-3 text-sm text-neutral-500">
+        … waiting
+      </p>
+    );
+  }
+  if (backend.running && backend.health) {
+    return (
+      <p className="mt-3 text-sm text-brand-500">
+        ✓ healthy ·{' '}
+        <span className="text-neutral-400">
+          {backend.base_url} · v{backend.health.version}
+        </span>
+      </p>
+    );
+  }
+  return (
+    <p className="mt-3 text-sm text-amber-400">
+      ⌛ {backend.error ?? 'starting…'}
+    </p>
   );
 }
