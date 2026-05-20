@@ -50,11 +50,22 @@ function LiveMeeting() {
 
       // Audio + mixer + ASR
       await micStart();
+
+      // System audio is optional — if it hangs (user hasn't granted Screen
+      // Recording yet, no dialog dismissed, etc.) we don't want to block
+      // the rest of the meeting flow. Race against a 4-second timeout.
       try {
-        await systemAudioStart();
-      } catch {
-        // not fatal — user may not have granted Screen Recording yet
+        await Promise.race([
+          systemAudioStart(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('system-audio timeout')), 4000),
+          ),
+        ]);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('System audio unavailable — continuing with mic only:', err);
       }
+
       await mixerStart();
       await asrStart('tiny.en');
 
