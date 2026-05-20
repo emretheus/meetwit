@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession as Session
 
 from meetwit.models import ActionItem, Conflict, Decision, Meeting, Summary
 from meetwit.services import processes
+from meetwit.services.conflicts import ConflictProgress, detect_conflicts
 from meetwit.services.post_meeting import PostMeetingProgress, process_meeting
 
 log = structlog.get_logger()
@@ -202,6 +203,46 @@ async def patch_action_item(
             deadline=item.deadline,
             status=item.status,
         )
+
+
+class ConflictsProcessRequest(BaseModel):
+    model: str = "qwen2.5:7b-instruct"
+    confidence_threshold: float = 0.8
+
+
+@router.post("/conflicts/{meeting_id}/detect", response_model=ProcessResponse)
+async def trigger_conflict_detection(
+    meeting_id: str, body: ConflictsProcessRequest, request: Request
+) -> ProcessResponse:
+    engine = _engine(request)
+    settings = request.app.state.settings
+    embedder = request.app.state.embedder
+
+    async with Session(engine) as session:  # type: ignore[arg-type]
+        if (await session.get(Meeting, meeting_id)) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found"
+            )
+
+    pid = processes.register()
+    progress = ConflictProgress()
+    processes.set_state(pid, progress)
+
+    async def _runner() -> None:
+        await detect_conflicts(
+            meeting_id=meeting_id,
+            engine=engine,  # type: ignore[arg-type]
+            embedder=embedder,
+            ollama_url=settings.ollama_url,
+            model=body.model,
+            progress=progress,
+            confidence_threshold=body.confidence_threshold,
+        )
+        processes.set_state(pid, progress)
+
+    task = asyncio.create_task(_runner())
+    processes.set_task(pid, task)
+    return ProcessResponse(process_id=pid)
 
 
 @router.get("/conflicts/{meeting_id}", response_model=list[ConflictOut])
