@@ -26,6 +26,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install cmake (whisper.cpp build dep)
+        run: brew install cmake
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:

@@ -37,6 +37,8 @@ cpal = "0.15"
 hound = "3"
 parking_lot = "0.12"
 rubato = "0.15"
+whisper-rs = { version = "0.13", default-features = false, features = ["metal", "coreml"] }
+sha2 = "0.10"
 
 [features]
 default = ["custom-protocol"]

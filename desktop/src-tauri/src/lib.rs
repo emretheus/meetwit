@@ -1,5 +1,6 @@
 //! Meetwit Tauri shell — Rust core entrypoint.
 
+mod asr;
 mod audio;
 mod commands;
 mod sidecar;
@@ -70,6 +71,10 @@ pub fn run() {
             commands::mixer_start,
             commands::mixer_stop,
             commands::mixer_status,
+            commands::asr_models,
+            commands::asr_start,
+            commands::asr_stop,
+            commands::asr_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
