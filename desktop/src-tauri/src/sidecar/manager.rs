@@ -45,6 +45,18 @@ impl SpawnOptions {
             args: vec!["run".into(), "python".into(), "-m".into(), "meetwit".into()],
         }
     }
+
+    /// Release-mode: invoke the PyInstaller binary bundled inside the .app at
+    /// `Contents/Resources/python-backend/meetwit-sidecar`.
+    pub fn release(resources_dir: &std::path::Path) -> Self {
+        let exe = resources_dir.join("python-backend").join("meetwit-sidecar");
+        Self {
+            port: DEFAULT_PORT,
+            working_dir: None,
+            program: exe.display().to_string(),
+            args: vec![],
+        }
+    }
 }
 
 /// A handle to the running sidecar — kept inside Tauri's app state.

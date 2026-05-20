@@ -383,6 +383,95 @@ pub fn mixer_status(state: State<'_, AppState>) -> MixerStatus {
     }
 }
 
+// ─── Onboarding / system helpers ────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelDownloadProgress {
+    pub model: String,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+    pub finished: bool,
+    pub error: Option<String>,
+}
+
+/// Download a Whisper ggml model from HuggingFace to the user data dir.
+/// Streams progress via the "whisper-download-progress" Tauri event.
+#[tauri::command]
+pub async fn whisper_download(app: tauri::AppHandle, model: String) -> Result<String, String> {
+    use std::io::Write;
+
+    use futures_util::StreamExt;
+
+    let info = match model.as_str() {
+        "tiny.en" | "tiny-en" => crate::asr::ModelInfo::TinyEn,
+        "base.en" | "base-en" => crate::asr::ModelInfo::BaseEn,
+        "small.en" | "small-en" => crate::asr::ModelInfo::SmallEn,
+        "medium.en" | "medium-en" => crate::asr::ModelInfo::MediumEn,
+        other => return Err(format!("unknown model: {other}")),
+    };
+    let dest = crate::asr::model_path(info).ok_or_else(|| "no user data dir".to_string())?;
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let url = info.download_url();
+    let client = reqwest::Client::new();
+
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("download failed: HTTP {}", resp.status()));
+    }
+    let total = resp.content_length().unwrap_or(0);
+
+    let mut stream = resp.bytes_stream();
+    let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
+
+    let mut done: u64 = 0;
+    while let Some(chunk_res) = stream.next().await {
+        let chunk = chunk_res.map_err(|e| e.to_string())?;
+        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        done += chunk.len() as u64;
+        let payload = ModelDownloadProgress {
+            model: model.clone(),
+            bytes_done: done,
+            bytes_total: total,
+            finished: false,
+            error: None,
+        };
+        let _ = app.emit("whisper-download-progress", payload);
+    }
+    let final_payload = ModelDownloadProgress {
+        model: model.clone(),
+        bytes_done: done,
+        bytes_total: total,
+        finished: true,
+        error: None,
+    };
+    let _ = app.emit("whisper-download-progress", final_payload);
+
+    Ok(dest.display().to_string())
+}
+
+/// Open a macOS System Settings pane (used for permission deep-links).
+#[tauri::command]
+pub fn open_system_settings(pane: String) -> Result<(), String> {
+    let url = match pane.as_str() {
+        "microphone" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        }
+        "screen-recording" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+        "privacy" => "x-apple.systempreferences:com.apple.preference.security?Privacy",
+        other => return Err(format!("unknown pane: {other}")),
+    };
+    std::process::Command::new("open")
+        .arg(url)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn sanitize_filename(input: &str) -> String {
     let trimmed = input.trim();
     let cleaned: String = trimmed
