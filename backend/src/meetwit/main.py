@@ -12,7 +12,8 @@ from meetwit import __version__
 from meetwit.config import Settings, get_settings
 from meetwit.db import make_engine, run_migrations
 from meetwit.indexing import Embedder
-from meetwit.routers import knowledge
+from meetwit.llm import OllamaProvider
+from meetwit.routers import knowledge, memory
 
 log = structlog.get_logger()
 
@@ -24,6 +25,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     run_migrations(settings.db_path)
     app.state.engine = make_engine(settings.db_path)
     app.state.embedder = Embedder()
+    app.state.llm = OllamaProvider(settings.ollama_url)
     try:
         yield
     finally:
@@ -54,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"version": __version__}
 
     app.include_router(knowledge.router)
+    app.include_router(memory.router)
     return app
 
 
