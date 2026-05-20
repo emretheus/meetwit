@@ -6,7 +6,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::audio::mic::MicLevel;
-use crate::audio::{MicCapture, SystemCapture, sck_available};
+use crate::audio::{AudioMixer, MicCapture, MixerStats, SystemCapture, sck_available};
 use crate::sidecar::client::HealthInfo;
 use crate::state::AppState;
 
@@ -200,6 +200,68 @@ pub fn system_audio_status(state: State<'_, AppState>) -> SystemAudioStatus {
             available: sck_available(),
             running: false,
             rms: 0.0,
+        },
+    }
+}
+
+// ─── Mixer commands ─────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct MixerStatus {
+    pub running: bool,
+    pub stats: MixerStats,
+}
+
+/// Start the audio mixer. Pulls from whichever sources are running
+/// (mic + optional system audio). Idempotent.
+#[tauri::command]
+pub fn mixer_start(state: State<'_, AppState>) -> Result<MixerStatus, String> {
+    let mic_slot = state.mic();
+    let mic_guard = mic_slot.lock();
+    let mic = mic_guard
+        .as_ref()
+        .ok_or_else(|| "mic not running — start it first".to_string())?;
+    let mic_ring = mic.ring();
+
+    let sys_slot = state.system_audio();
+    let sys_guard = sys_slot.lock();
+    let sys_ring = sys_guard.as_ref().map(SystemCapture::ring);
+    drop(sys_guard);
+    drop(mic_guard);
+
+    let mixer_slot = state.mixer();
+    let mut mixer_guard = mixer_slot.lock();
+    if mixer_guard.is_none() {
+        *mixer_guard = Some(AudioMixer::start(mic_ring, sys_ring));
+        log::info!("mixer started");
+    }
+    let m = mixer_guard.as_ref().expect("mixer exists");
+    Ok(MixerStatus {
+        running: true,
+        stats: m.stats(),
+    })
+}
+
+#[tauri::command]
+pub fn mixer_stop(state: State<'_, AppState>) -> Result<(), String> {
+    let slot = state.mixer();
+    let mut guard = slot.lock();
+    *guard = None;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn mixer_status(state: State<'_, AppState>) -> MixerStatus {
+    let slot = state.mixer();
+    let guard = slot.lock();
+    match guard.as_ref() {
+        Some(m) => MixerStatus {
+            running: true,
+            stats: m.stats(),
+        },
+        None => MixerStatus {
+            running: false,
+            stats: MixerStats::default(),
         },
     }
 }

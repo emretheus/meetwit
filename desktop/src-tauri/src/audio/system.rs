@@ -102,7 +102,6 @@ impl SystemCapture {
         Ok(Self { shared })
     }
 
-    #[allow(dead_code)]
     pub fn ring(&self) -> SampleRing {
         self.shared.ring.clone()
     }

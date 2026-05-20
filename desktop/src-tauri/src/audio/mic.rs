@@ -100,7 +100,6 @@ impl MicCapture {
         self.shared.last_level.lock().clone()
     }
 
-    #[allow(dead_code)]
     pub fn ring(&self) -> SampleRing {
         self.shared.ring.clone()
     }

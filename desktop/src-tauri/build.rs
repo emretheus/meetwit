@@ -55,7 +55,11 @@ fn compile_swift_bridge() {
             "failed to invoke swiftc — install Xcode Command Line Tools (xcode-select --install)",
         );
 
-    assert!(status.success(), "swiftc failed to compile {}", swift_src.display());
+    assert!(
+        status.success(),
+        "swiftc failed to compile {}",
+        swift_src.display()
+    );
 
     println!("cargo:rustc-link-search=native={}", out_dir_path.display());
     println!("cargo:rustc-link-lib=static=meetwit_sck");
