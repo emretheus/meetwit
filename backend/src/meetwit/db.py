@@ -1,17 +1,21 @@
 """Database engine bootstrap.
 
-V1 uses SQLite via SQLAlchemy 2 async. Each new connection loads the
-sqlite-vec extension so vector virtual tables and `vec_distance_cosine`
-are available everywhere.
+V1 uses SQLite via SQLAlchemy 2 async. The sqlite-vec extension is loaded
+into every new aiosqlite connection via ``async_creator``. aiosqlite owns
+its own worker thread; sqlite3 + load_extension both happen there, so
+there's no cross-thread bridging to worry about.
 """
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from sqlalchemy import event
+import aiosqlite
+from alembic import command
+from alembic.config import Config as AlembicConfig
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -19,27 +23,50 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from meetwit.sqlite_vec_loader import load_into_connection
+from meetwit.sqlite_vec_loader import load_into_connection, vec0_loadable_path
+
+
+def _alembic_config(db_path: Path) -> AlembicConfig:
+    """Build an Alembic config pointing at our migrations + the live DB."""
+    backend_root = Path(__file__).resolve().parents[2]  # backend/
+    cfg = AlembicConfig(str(backend_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_root / "src" / "meetwit" / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    return cfg
+
+
+def run_migrations(db_path: Path) -> None:
+    """Run Alembic upgrade head against ``db_path``. Idempotent."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg = _alembic_config(db_path)
+    command.upgrade(cfg, "head")
 
 
 def make_engine(db_path: Path) -> AsyncEngine:
-    """Build an async SQLAlchemy engine for the given SQLite file path.
-
-    Registers a ``connect`` event listener that loads ``sqlite-vec`` into
-    every new raw connection — works in dev and in PyInstaller bundles.
-    """
+    """Build an async SQLAlchemy engine with sqlite-vec preloaded per connection."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    url = f"sqlite+aiosqlite:///{db_path}"
-    engine = create_async_engine(url, echo=False, future=True)
 
-    # sync-only event hook; aiosqlite invokes it on the underlying connection.
-    sync_engine = engine.sync_engine
+    async def _async_creator() -> aiosqlite.Connection:
+        conn = await aiosqlite.connect(str(db_path))
+        await conn.enable_load_extension(True)
+        await conn.load_extension(vec0_loadable_path())
+        await conn.enable_load_extension(False)
+        return conn
 
-    @event.listens_for(sync_engine, "connect")
-    def _load_vec(dbapi_connection: object, _conn_record: object) -> None:
-        load_into_connection(dbapi_connection)
+    return create_async_engine(
+        "sqlite+aiosqlite://",
+        echo=False,
+        future=True,
+        async_creator=_async_creator,
+    )
 
-    return engine
+
+def make_sync_connection(db_path: Path) -> sqlite3.Connection:
+    """Synchronous sqlite3 connection with sqlite-vec loaded — for tests / migrations."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    load_into_connection(conn)
+    return conn
 
 
 @asynccontextmanager
