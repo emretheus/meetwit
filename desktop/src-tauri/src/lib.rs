@@ -114,10 +114,24 @@ fn build_spawn_options() -> SpawnOptions {
         }
     }
 
-    // 2. Dev: walk up to the workspace root.
+    // 2. Dev: locate the workspace root by walking up from the exe until we
+    // find a `backend/` sibling. The Cargo workspace puts the target dir at
+    // the workspace root, so for `<root>/target/debug/meetwit` we need to
+    // walk up 3 ancestors. Using a search-up loop keeps this robust to layout
+    // changes (e.g. `cargo --target-dir`).
     let workspace_root = exe
-        .and_then(|p| p.ancestors().nth(4).map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-    log::info!("sidecar: using dev command (uv run python -m meetwit)");
+        .as_ref()
+        .and_then(|p| {
+            p.ancestors()
+                .find(|a| a.join("backend").join("pyproject.toml").is_file())
+                .map(std::path::Path::to_path_buf)
+        })
+        .unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        });
+    log::info!(
+        "sidecar: using dev command (uv run python -m meetwit) in {}",
+        workspace_root.display()
+    );
     SpawnOptions::dev_default(&workspace_root)
 }

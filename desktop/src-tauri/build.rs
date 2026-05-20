@@ -71,13 +71,22 @@ fn compile_swift_bridge() {
     println!("cargo:rustc-link-lib=framework=CoreAudio");
     println!("cargo:rustc-link-lib=framework=Foundation");
 
-    // Swift runtime libs.
-    println!(
-        "cargo:rustc-link-search=native=/Library/Developer/CommandLineTools/usr/lib/swift/macosx"
-    );
-    println!(
-        "cargo:rustc-link-search=native=/Library/Developer/CommandLineTools/usr/lib/swift-5.5/macosx"
-    );
+    // Swift runtime libs. libswift_Concurrency.dylib is NOT in the dyld
+    // shared cache on Apple Silicon — it ships only in Xcode/CLT paths.
+    // Add the CLT location as both link-search and runtime rpath. Don't
+    // add /usr/lib/swift as an rpath: the dynamic loader will find the
+    // OS-provided libswiftCore there automatically, but if we also rpath
+    // it Swift will load a *second* libswift_Concurrency.dylib copy and
+    // print "Class _Tt... implemented in both" warnings.
+    let swift_search_dirs = [
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx",
+        "/Library/Developer/CommandLineTools/usr/lib/swift/macosx",
+        "/Library/Developer/CommandLineTools/usr/lib/swift-5.5/macosx",
+    ];
+    for dir in &swift_search_dirs {
+        println!("cargo:rustc-link-search=native={dir}");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+    }
     println!("cargo:rustc-link-lib=dylib=swiftCore");
     println!("cargo:rustc-link-lib=dylib=swiftFoundation");
 }
