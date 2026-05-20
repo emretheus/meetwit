@@ -190,7 +190,7 @@ export async function listConflicts(meetingId: string): Promise<ConflictOut[]> {
 
 export async function triggerPostMeeting(
   meetingId: string,
-  model = 'qwen2.5:7b-instruct',
+  model = 'qwen2.5:3b-instruct',
 ): Promise<{ process_id: string }> {
   return jsonFetch<{ process_id: string }>(`/post-meeting/${meetingId}/process`, {
     method: 'POST',
@@ -205,7 +205,7 @@ export async function triggerConflictDetection(
   return jsonFetch<{ process_id: string }>(`/conflicts/${meetingId}/detect`, {
     method: 'POST',
     body: JSON.stringify({
-      model: body.model ?? 'qwen2.5:7b-instruct',
+      model: body.model ?? 'qwen2.5:3b-instruct',
       confidence_threshold: body.confidence_threshold ?? 0.8,
     }),
   });

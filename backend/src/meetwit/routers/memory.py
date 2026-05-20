@@ -20,7 +20,7 @@ router = APIRouter(prefix="/memory", tags=["memory"])
 
 class AskRequest(BaseModel):
     question: str
-    model: str = "qwen2.5:7b-instruct"
+    model: str = "qwen2.5:3b-instruct"
     top_k: int = 8
 
 

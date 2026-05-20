@@ -73,7 +73,7 @@ function SettingsPage() {
                 >
                   ollama.com
                 </a>{' '}
-                and run <code className="rounded bg-neutral-800 px-1">ollama pull qwen2.5:7b-instruct</code>.
+                and run <code className="rounded bg-neutral-800 px-1">ollama pull qwen2.5:3b-instruct</code>.
               </p>
             )}
           </>

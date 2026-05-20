@@ -20,7 +20,7 @@ router = APIRouter(prefix="", tags=["post-meeting"])
 
 
 class ProcessRequest(BaseModel):
-    model: str = "qwen2.5:7b-instruct"
+    model: str = "qwen2.5:3b-instruct"
 
 
 class ProcessResponse(BaseModel):
@@ -200,7 +200,7 @@ async def patch_action_item(item_id: int, body: ActionItemPatch, request: Reques
 
 
 class ConflictsProcessRequest(BaseModel):
-    model: str = "qwen2.5:7b-instruct"
+    model: str = "qwen2.5:3b-instruct"
     confidence_threshold: float = 0.8
 
 

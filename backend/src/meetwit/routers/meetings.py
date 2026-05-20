@@ -70,7 +70,7 @@ class TranscriptBatch(BaseModel):
 class LiveAskRequest(BaseModel):
     meeting_id: str
     question: str
-    model: str = "qwen2.5:7b-instruct"
+    model: str = "qwen2.5:3b-instruct"
     recent_seconds: int = 300
     top_k_docs: int = 5
 
