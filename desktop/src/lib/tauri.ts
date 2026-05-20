@@ -68,3 +68,27 @@ export async function micRecordStart(filename: string): Promise<string> {
 export async function micRecordStop(): Promise<string | null> {
   return invoke<string | null>('mic_record_stop');
 }
+
+// ─── System audio (ScreenCaptureKit) ─────────────────────────────────────
+
+export interface SystemAudioStatus {
+  available: boolean;
+  running: boolean;
+  rms: number;
+}
+
+export async function systemAudioAvailable(): Promise<boolean> {
+  return invoke<boolean>('system_audio_available');
+}
+
+export async function systemAudioStart(): Promise<SystemAudioStatus> {
+  return invoke<SystemAudioStatus>('system_audio_start');
+}
+
+export async function systemAudioStop(): Promise<void> {
+  return invoke<void>('system_audio_stop');
+}
+
+export async function systemAudioStatus(): Promise<SystemAudioStatus> {
+  return invoke<SystemAudioStatus>('system_audio_status');
+}

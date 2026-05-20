@@ -63,6 +63,10 @@ pub fn run() {
             commands::mic_status,
             commands::mic_record_start,
             commands::mic_record_stop,
+            commands::system_audio_available,
+            commands::system_audio_start,
+            commands::system_audio_stop,
+            commands::system_audio_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
