@@ -4,12 +4,12 @@ members = ["desktop/src-tauri"]
 
 [workspace.package]
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 authors = ["Meetwit contributors"]
 license = "MIT"
 repository = "https://github.com/emretheus/meetwit"
 homepage = "https://github.com/emretheus/meetwit"
-rust-version = "1.83"
+rust-version = "1.85"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -25,10 +25,15 @@ missing_panics_doc = "allow"
 must_use_candidate = "allow"
 doc_markdown = "allow"               # backtick-every-identifier is noise
 redundant_closure_for_method_calls = "allow"
-cast_possible_truncation = "allow"   # we handle these case-by-case
-cast_possible_wrap = "allow"         # ditto
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
 cast_sign_loss = "allow"
 cast_lossless = "allow"
+cast_precision_loss = "allow"
+needless_pass_by_value = "allow"     # passing-by-value into closures fires constantly
+too_many_lines = "allow"             # 100-line cap is too tight for stream-builder fns
+case_sensitive_file_extension_comparisons = "allow"
+unnecessary_wraps = "allow"
 uninlined_format_args = "warn"       # keep — actually catches readability issues
 
 [profile.release]

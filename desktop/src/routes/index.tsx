@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
+import { MicControls } from '@/components/MicControls';
 import {
   backendStatus,
   onBackendFailed,
@@ -86,6 +87,8 @@ function HomePage() {
           Refresh
         </button>
       </section>
+
+      <MicControls />
 
       <section className="w-full rounded-lg border border-neutral-800 bg-neutral-900/50 p-5">
         <h2 className="text-sm font-medium text-neutral-300">Tauri IPC smoke test</h2>

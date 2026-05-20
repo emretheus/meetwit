@@ -2,13 +2,17 @@
 //!
 //! `AppState` is built once at startup and shared across all commands.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
+use parking_lot::Mutex;
+
+use crate::audio::MicCapture;
 use crate::sidecar::SidecarHandle;
 
 #[derive(Default)]
 pub struct AppState {
     sidecar: OnceLock<SidecarHandle>,
+    mic: Arc<Mutex<Option<MicCapture>>>,
 }
 
 impl AppState {
@@ -18,5 +22,9 @@ impl AppState {
 
     pub fn sidecar(&self) -> Option<&SidecarHandle> {
         self.sidecar.get()
+    }
+
+    pub fn mic(&self) -> Arc<Mutex<Option<MicCapture>>> {
+        self.mic.clone()
     }
 }

@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 
 use super::client::SidecarClient;
 use super::health::wait_until_ready;
-use super::runtime::{runtime_path, RuntimeInfo};
+use super::runtime::{RuntimeInfo, runtime_path};
 
 /// Sidecar host (loopback only).
 const HOST: &str = "127.0.0.1";
@@ -73,7 +73,7 @@ impl SidecarHandle {
                 log::info!("sidecar.shutdown sending SIGTERM to pid {pid}");
                 #[cfg(unix)]
                 {
-                    use nix::sys::signal::{kill, Signal};
+                    use nix::sys::signal::{Signal, kill};
                     use nix::unistd::Pid;
                     // Ignore failure — child may have already died.
                     let _ = kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
