@@ -26,6 +26,9 @@ dependencies = [
     "sentence-transformers==3.3.*",
     # Search
     "rank-bm25==0.2.*",
+    # LLM
+    "ollama==0.4.*",
+    "sse-starlette==2.1.*",
 ]
 
 [project.optional-dependencies]
