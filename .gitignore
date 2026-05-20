@@ -1,0 +1,108 @@
+# ─── macOS ───────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# ─── Rust / Cargo ────────────────────────────────────────────────────────
+target/
+**/*.rs.bk
+Cargo.lock.bak
+*.pdb
+
+# ─── Node / pnpm ─────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npmrc.local
+dist/
+dist-ssr/
+.cache/
+.parcel-cache/
+.vite/
+.turbo/
+
+# ─── Python / uv ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+.python-version.local
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# ─── Tauri ───────────────────────────────────────────────────────────────
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/binaries/
+desktop/src-tauri/WixTools/
+
+# ─── Generated routes (TanStack Router) ──────────────────────────────────
+desktop/src/routeTree.gen.ts
+
+# ─── App runtime data (created by Meetwit) ───────────────────────────────
+models/
+audio/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# ─── IDEs ────────────────────────────────────────────────────────────────
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# ─── Local env / secrets ─────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+
+# ─── Logs ────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Plan / scratch ──────────────────────────────────────────────────────
+scratch/
+.tmp/

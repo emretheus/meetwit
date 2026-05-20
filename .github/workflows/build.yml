@@ -1,0 +1,22 @@
+name: Build (manual)
+
+# Placeholder workflow — full Tauri build + code-sign + notarize pipeline arrives in Week 15.
+# Triggered manually only for now to avoid burning macOS minutes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: "Code-sign + notarize the resulting .app + .dmg"
+        type: boolean
+        default: false
+
+jobs:
+  noop:
+    runs-on: macos-14
+    steps:
+      - name: Placeholder
+        run: |
+          echo "Tauri build pipeline lands in Week 15."
+          echo "Will assemble PyInstaller backend → bundle into .app → sign → notarize."
+          echo "sign input was: ${{ inputs.sign }}"
