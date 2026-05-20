@@ -2,7 +2,7 @@
 .DS_Store
 .AppleDouble
 .LSOverride
-Icon?
+# (no bare `Icon?` rule — it would match icon.png. Use the carriage-return form for Finder's custom-icon resource forks if ever needed.)
 ._*
 .Spotlight-V100
 .Trashes
@@ -40,8 +40,11 @@ develop-eggs/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Python build artifacts — anchor to repo root so they don't match desktop/src/lib/.
+/lib/
+/lib64/
+/backend/lib/
+/backend/lib64/
 parts/
 sdist/
 var/
