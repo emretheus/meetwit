@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Tauri merges this with its generated Info.plist at build time.
+    Add only the keys Tauri does not set itself — usage descriptions for TCC.
+  -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Meetwit captures your microphone to transcribe what you say during meetings. Audio stays on this Mac.</string>
+
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Meetwit captures system audio (from Zoom, Meet, Teams, etc.) to transcribe what others say. We never read or capture your screen content — only the sound. Audio stays on this Mac.</string>
+
+  <!-- Apple Silicon only for V1. -->
+  <key>LSRequiresNativeExecution</key>
+  <true/>
+
+  <!-- Allow loading user-installed CLIs (ollama) from /usr/local/bin etc. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+</dict>
+</plist>

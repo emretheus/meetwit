@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Meetwit entitlements (Developer ID distribution, no sandbox in V1).
+    Sandbox + ScreenCaptureKit + PyInstaller is a known minefield; revisit
+    when App Store distribution is on the table (post-V1).
+  -->
+  <key>com.apple.security.app-sandbox</key>
+  <false/>
+
+  <!-- Microphone access (cpal) -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+  <key>com.apple.security.device.microphone</key>
+  <true/>
+
+  <!-- Network: localhost only for sidecar + Ollama. No "server" entitlement. -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!-- User-chosen file access (knowledge folder picker) -->
+  <key>com.apple.security.files.user-selected.read-only</key>
+  <true/>
+
+  <!-- Hardened runtime: required for notarization. -->
+  <!-- disable-library-validation is needed to load PyInstaller's bundled dylibs. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>
