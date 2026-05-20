@@ -35,3 +35,36 @@ export async function onBackendReady(handler: () => void): Promise<UnlistenFn> {
 export async function onBackendFailed(handler: (msg: string) => void): Promise<UnlistenFn> {
   return listen<string>('backend-failed', (e) => handler(e.payload));
 }
+
+// ─── Audio ────────────────────────────────────────────────────────────
+
+export interface MicLevel {
+  rms: number;
+  clipped: boolean;
+}
+
+export interface MicStatus {
+  running: boolean;
+  recording: boolean;
+  level: MicLevel;
+}
+
+export async function micStart(): Promise<MicStatus> {
+  return invoke<MicStatus>('mic_start');
+}
+
+export async function micStop(): Promise<void> {
+  return invoke<void>('mic_stop');
+}
+
+export async function micStatus(): Promise<MicStatus> {
+  return invoke<MicStatus>('mic_status');
+}
+
+export async function micRecordStart(filename: string): Promise<string> {
+  return invoke<string>('mic_record_start', { filename });
+}
+
+export async function micRecordStop(): Promise<string | null> {
+  return invoke<string | null>('mic_record_stop');
+}

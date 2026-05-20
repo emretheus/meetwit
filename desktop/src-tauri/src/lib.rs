@@ -1,5 +1,6 @@
 //! Meetwit Tauri shell — Rust core entrypoint.
 
+mod audio;
 mod commands;
 mod sidecar;
 mod state;
@@ -57,6 +58,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::backend_status,
+            commands::mic_start,
+            commands::mic_stop,
+            commands::mic_status,
+            commands::mic_record_start,
+            commands::mic_record_stop,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
