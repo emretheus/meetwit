@@ -14,6 +14,7 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const body = await resp.text().catch(() => '');
     throw new Error(`backend ${resp.status} ${resp.statusText}: ${body}`);
   }
+  if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
 }
 
@@ -56,6 +57,10 @@ export async function patchMeeting(id: string, body: Record<string, unknown>): P
   return jsonFetch(`/meetings/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 }
 
+export async function deleteMeeting(id: string): Promise<void> {
+  await jsonFetch(`/meetings/${id}`, { method: 'DELETE' });
+}
+
 export async function appendTranscripts(
   meetingId: string,
   segments: Array<{ text: string; audio_start: number; audio_end: number; speaker?: string }>,
@@ -76,8 +81,30 @@ export interface KnowledgeStats {
   last_indexed_at: string | null;
 }
 
+export interface DocumentSummary {
+  id: number;
+  path: string;
+  file_type: string;
+  status: string;
+  chunk_count: number;
+  indexed_at: string;
+  error: string | null;
+}
+
 export async function knowledgeStats(): Promise<KnowledgeStats> {
   return jsonFetch<KnowledgeStats>('/knowledge/stats');
+}
+
+export async function listDocuments(): Promise<DocumentSummary[]> {
+  return jsonFetch<DocumentSummary[]>('/knowledge/documents');
+}
+
+export async function deleteDocument(id: number): Promise<void> {
+  await jsonFetch(`/knowledge/documents/${id}`, { method: 'DELETE' });
+}
+
+export async function clearKnowledge(): Promise<void> {
+  await jsonFetch('/knowledge', { method: 'DELETE' });
 }
 
 export async function indexFolder(folder: string): Promise<{ process_id: string }> {
@@ -89,6 +116,99 @@ export async function indexFolder(folder: string): Promise<{ process_id: string 
 
 export async function indexProgress(processId: string): Promise<Record<string, unknown>> {
   return jsonFetch(`/knowledge/processes/${processId}`);
+}
+
+// ─── Post-meeting AI ──────────────────────────────────────────────────
+
+export interface SummaryOut {
+  meeting_id: string;
+  overview: string | null;
+  key_points: string[] | null;
+  company_context: string | null;
+  recommended_next_steps: string[] | null;
+}
+
+export interface DecisionOut {
+  id: number;
+  meeting_id: string;
+  text: string;
+  project: string | null;
+}
+
+export interface ActionItemOut {
+  id: number;
+  meeting_id: string;
+  task: string;
+  owner: string | null;
+  deadline: string | null;
+  status: string;
+}
+
+export interface ConflictOut {
+  id: number;
+  meeting_id: string;
+  description: string;
+  suggested_action: string | null;
+  confidence: number | null;
+}
+
+export async function getSummary(meetingId: string): Promise<SummaryOut | null> {
+  return jsonFetch<SummaryOut | null>(`/summaries/${meetingId}`);
+}
+
+export async function listDecisions(meetingId?: string): Promise<DecisionOut[]> {
+  const qs = meetingId ? `?meeting_id=${meetingId}` : '';
+  return jsonFetch<DecisionOut[]>(`/decisions${qs}`);
+}
+
+export async function listActionItems(filters: {
+  meeting_id?: string;
+  owner?: string;
+  status_filter?: string;
+} = {}): Promise<ActionItemOut[]> {
+  const params = new URLSearchParams();
+  if (filters.meeting_id) params.set('meeting_id', filters.meeting_id);
+  if (filters.owner) params.set('owner', filters.owner);
+  if (filters.status_filter) params.set('status_filter', filters.status_filter);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return jsonFetch<ActionItemOut[]>(`/action-items${qs}`);
+}
+
+export async function patchActionItem(
+  id: number,
+  body: { status?: string; owner?: string; deadline?: string },
+): Promise<ActionItemOut> {
+  return jsonFetch<ActionItemOut>(`/action-items/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function listConflicts(meetingId: string): Promise<ConflictOut[]> {
+  return jsonFetch<ConflictOut[]>(`/conflicts/${meetingId}`);
+}
+
+export async function triggerPostMeeting(
+  meetingId: string,
+  model = 'qwen2.5:7b-instruct',
+): Promise<{ process_id: string }> {
+  return jsonFetch<{ process_id: string }>(`/post-meeting/${meetingId}/process`, {
+    method: 'POST',
+    body: JSON.stringify({ model }),
+  });
+}
+
+export async function triggerConflictDetection(
+  meetingId: string,
+  body: { model?: string; confidence_threshold?: number } = {},
+): Promise<{ process_id: string }> {
+  return jsonFetch<{ process_id: string }>(`/conflicts/${meetingId}/detect`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: body.model ?? 'qwen2.5:7b-instruct',
+      confidence_threshold: body.confidence_threshold ?? 0.8,
+    }),
+  });
 }
 
 // ─── LLM ──────────────────────────────────────────────────────────────
@@ -152,7 +272,6 @@ async function streamSse(path: string, body: object, h: SseHandlers): Promise<vo
       buf = buf.slice(eolIdx + 1);
 
       if (line === '') {
-        // dispatch
         if (currentEvent === 'sources' && h.onSources) {
           try {
             h.onSources(JSON.parse(currentData) as SourceCitation[]);
