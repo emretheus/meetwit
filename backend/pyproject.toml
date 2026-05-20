@@ -46,6 +46,7 @@ addopts = "-ra -q --strict-markers"
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+extend-exclude = ["src/meetwit/migrations/versions"]
 
 [tool.ruff.lint]
 select = [
