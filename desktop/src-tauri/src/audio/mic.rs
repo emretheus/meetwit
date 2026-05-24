@@ -37,6 +37,65 @@ pub struct MicLevel {
     pub clipped: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AudioDevice {
+    /// Stable identifier we pass back to `start_with_device`. We use the
+    /// device *name* — cpal has no portable persistent id, and names are
+    /// stable enough for a "preferred device" preference.
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
+
+/// Enumerate input devices on the default host. The first entry mirrors the
+/// system default (also flagged via `is_default`).
+pub fn list_input_devices() -> Vec<AudioDevice> {
+    let host = cpal::default_host();
+    let default_name = host
+        .default_input_device()
+        .and_then(|d| d.name().ok())
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    if let Ok(devices) = host.input_devices() {
+        for dev in devices {
+            let Ok(name) = dev.name() else { continue };
+            // Skip devices that can't produce an input config (output-only).
+            if dev.default_input_config().is_err() {
+                continue;
+            }
+            let is_default = name == default_name;
+            out.push(AudioDevice {
+                id: name.clone(),
+                name,
+                is_default,
+            });
+        }
+    }
+    out
+}
+
+fn resolve_input_device(device_id: Option<&str>) -> Result<cpal::Device> {
+    let host = cpal::default_host();
+    match device_id {
+        None => host
+            .default_input_device()
+            .ok_or_else(|| anyhow!("no default input device")),
+        Some(id) => {
+            if let Ok(devices) = host.input_devices() {
+                for dev in devices {
+                    if dev.name().ok().as_deref() == Some(id) {
+                        return Ok(dev);
+                    }
+                }
+            }
+            // Fall back to default if the saved device is gone (unplugged).
+            log::warn!("mic: device '{id}' not found, falling back to default");
+            host.default_input_device()
+                .ok_or_else(|| anyhow!("no default input device"))
+        }
+    }
+}
+
 /// State shared between the cpal callback thread and the rest of the app.
 struct MicShared {
     ring: SampleRing,
@@ -60,7 +119,13 @@ pub struct MicCapture {
 }
 
 impl MicCapture {
+    #[allow(dead_code)] // convenience API; callers use start_with_device(None)
     pub fn start_default() -> Result<Self> {
+        Self::start_with_device(None)
+    }
+
+    /// Start capture from a specific input device by name. `None` → default.
+    pub fn start_with_device(device_id: Option<String>) -> Result<Self> {
         let shared = Arc::new(MicShared {
             ring: SampleRing::new(RING_CAPACITY_SAMPLES),
             last_level: Mutex::new(MicLevel {
@@ -76,7 +141,7 @@ impl MicCapture {
         let thread = thread::Builder::new()
             .name("meetwit-mic".into())
             .spawn(move || {
-                if let Err(err) = run_stream(shared_for_thread, ready_tx.clone()) {
+                if let Err(err) = run_stream(shared_for_thread, device_id, ready_tx.clone()) {
                     // Try to forward the failure if we haven't sent yet.
                     let _ = ready_tx.send(Err(err));
                 }
@@ -159,12 +224,10 @@ impl Drop for MicCapture {
 #[allow(clippy::needless_pass_by_value)]
 fn run_stream(
     shared: Arc<MicShared>,
+    device_id: Option<String>,
     ready_tx: std::sync::mpsc::SyncSender<Result<()>>,
 ) -> Result<()> {
-    let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| anyhow!("no default input device"))?;
+    let device = resolve_input_device(device_id.as_deref())?;
     let name = device.name().unwrap_or_else(|_| "<unknown>".into());
 
     let config = device

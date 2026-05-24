@@ -21,7 +21,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -38,9 +37,21 @@ hound = "3"
 parking_lot = "0.12"
 rubato = "0.15"
 whisper-rs = { version = "0.13", default-features = false, features = ["metal", "coreml"] }
+# Silero VAD via emotechlab's Rust wrapper (Meetily uses the same crate + commit).
+# `static-model` embeds the ~1.7 MB ONNX model directly into the binary so no
+# download is required on first run.
+silero = { git = "https://github.com/emotechlab/silero-rs", rev = "26a6460", default-features = false, features = ["static-model"] }
 sha2 = "0.10"
 tokio-stream = "0.1"
 futures-util = "0.3"
+# Calendar OAuth (ADR-0004): Keychain for the refresh token, base64url for PKCE,
+# rand for the code_verifier + CSRF state nonce.
+keyring = { version = "3", features = ["apple-native"] }
+base64 = "0.22"
+rand = "0.8"
+serde_urlencoded = "0.7"
+# Auto-detect meetings (ADR-0005): native macOS notification nudges.
+tauri-plugin-notification = "2"
 
 [features]
 default = ["custom-protocol"]

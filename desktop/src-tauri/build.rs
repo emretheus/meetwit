@@ -43,7 +43,7 @@ fn compile_swift_bridge() {
             "-parse-as-library",
             "-O",
             "-target",
-            "arm64-apple-macosx13.0",
+            "arm64-apple-macosx14.4",
             "-module-name",
             "MeetwitSCK",
             "-o",
@@ -64,11 +64,11 @@ fn compile_swift_bridge() {
     println!("cargo:rustc-link-search=native={}", out_dir_path.display());
     println!("cargo:rustc-link-lib=static=meetwit_sck");
 
-    // Apple frameworks needed by the Swift code.
-    println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
-    println!("cargo:rustc-link-lib=framework=AVFoundation");
-    println!("cargo:rustc-link-lib=framework=CoreMedia");
+    // Apple frameworks needed by the Swift code. System audio is captured via
+    // the Core Audio process-tap API (CATapDescription lives in AudioToolbox;
+    // the tap/aggregate/device calls live in CoreAudio).
     println!("cargo:rustc-link-lib=framework=CoreAudio");
+    println!("cargo:rustc-link-lib=framework=AudioToolbox");
     println!("cargo:rustc-link-lib=framework=Foundation");
 
     // Swift runtime libs. libswift_Concurrency.dylib is NOT in the dyld

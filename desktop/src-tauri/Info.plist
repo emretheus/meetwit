@@ -9,8 +9,14 @@
   <key>NSMicrophoneUsageDescription</key>
   <string>Meetwit captures your microphone to transcribe what you say during meetings. Audio stays on this Mac.</string>
 
+  <!-- System audio is captured via the Core Audio process-tap API (macOS
+       14.4+), which uses the "Audio Capture" TCC permission. -->
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Meetwit captures system audio (from Zoom, Meet, Teams, etc.) to transcribe what others say in the meeting. Audio stays on this Mac.</string>
+
+  <!-- Kept for older fallbacks; the active path no longer uses ScreenCaptureKit. -->
   <key>NSScreenCaptureUsageDescription</key>
-  <string>Meetwit captures system audio (from Zoom, Meet, Teams, etc.) to transcribe what others say. We never read or capture your screen content — only the sound. Audio stays on this Mac.</string>
+  <string>Meetwit captures system audio to transcribe what others say. We never read or capture your screen content — only the sound. Audio stays on this Mac.</string>
 
   <!-- Apple Silicon only for V1. -->
   <key>LSRequiresNativeExecution</key>
