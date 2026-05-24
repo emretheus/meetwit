@@ -11,7 +11,7 @@ from typing import Literal
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -22,7 +22,17 @@ from meetwit.llm.prompts import (
     PROACTIVE_WATCHER_SYSTEM,
 )
 from meetwit.llm.providers import LlmConfig, LlmUnavailableError, Provider, msg, stream_chat
-from meetwit.models import CalendarEvent, Meeting, Transcript, TranscriptChunk
+from meetwit.models import (
+    ActionItem,
+    CalendarEvent,
+    Conflict,
+    Decision,
+    Folder,
+    Meeting,
+    Note,
+    Transcript,
+    TranscriptChunk,
+)
 from meetwit.retrieval import HybridRetriever
 
 
@@ -60,6 +70,10 @@ class MeetingPatch(BaseModel):
     summary_md: str | None = Field(default=None, max_length=200_000)
     audio_path: str | None = Field(default=None, max_length=4_096)
     summary_language: str | None = Field(default=None, max_length=8)
+    # Move to a folder (#424). Omit to leave unchanged; pass null (with
+    # set_folder=True) to move to root.
+    folder_id: str | None = Field(default=None, max_length=36)
+    set_folder: bool = False
 
 
 class MeetingSummary(BaseModel):
@@ -74,6 +88,7 @@ class MeetingSummary(BaseModel):
     audio_path: str | None = None
     calendar_event_id: str | None = None
     summary_language: str = "en"
+    folder_id: str | None = None
 
 
 class TranscriptIn(BaseModel):
@@ -158,6 +173,7 @@ def _meeting_summary(m: Meeting, transcript_count: int) -> MeetingSummary:
         audio_path=m.audio_path,
         calendar_event_id=m.calendar_event_id,
         summary_language=m.summary_language or "en",
+        folder_id=m.folder_id,
     )
 
 
@@ -181,11 +197,26 @@ async def create_meeting(body: MeetingCreate, request: Request) -> MeetingSummar
 
 
 @router.get("/meetings", response_model=list[MeetingSummary])
-async def list_meetings(request: Request) -> list[MeetingSummary]:
+async def list_meetings(
+    request: Request,
+    folder_id: str | None = Query(default=None, max_length=36),
+    root_only: bool = Query(default=False),
+) -> list[MeetingSummary]:
+    """List meetings, newest first.
+
+    Folder filtering (#424): pass ``folder_id`` to list one folder's meetings,
+    or ``root_only=true`` to list only meetings not in any folder. With neither,
+    all meetings are returned (the default, unchanged behavior).
+    """
     engine = _engine(request)
     out: list[MeetingSummary] = []
     async with Session(engine) as session:
-        rows = await session.execute(select(Meeting).order_by(Meeting.started_at.desc()))
+        stmt = select(Meeting).order_by(Meeting.started_at.desc())
+        if folder_id is not None:
+            stmt = stmt.where(Meeting.folder_id == folder_id)
+        elif root_only:
+            stmt = stmt.where(Meeting.folder_id.is_(None))
+        rows = await session.execute(stmt)
         meetings = rows.scalars().all()
         for m in meetings:
             count_rows = await session.execute(
@@ -273,9 +304,24 @@ async def get_meeting(meeting_id: str, request: Request) -> dict[str, object]:
             ).model_dump()
             for t in rows.scalars().all()
         ]
+        note_rows = await session.execute(
+            select(Note).where(Note.meeting_id == meeting_id).order_by(Note.created_at.asc())
+        )
+        notes = [
+            {
+                "id": n.id,
+                "meeting_id": n.meeting_id,
+                "text": n.text,
+                "audio_offset": n.audio_offset,
+                "created_at": n.created_at.isoformat(),
+                "updated_at": n.updated_at.isoformat(),
+            }
+            for n in note_rows.scalars().all()
+        ]
         return {
             "meeting": _meeting_summary(m, len(transcripts)).model_dump(),
             "transcripts": transcripts,
+            "notes": notes,
         }
 
 
@@ -300,6 +346,14 @@ async def patch_meeting(meeting_id: str, body: MeetingPatch, request: Request) -
             m.audio_path = body.audio_path
         if body.summary_language is not None:
             m.summary_language = body.summary_language.strip().lower() or "en"
+        if body.set_folder:
+            if body.folder_id is not None:
+                target = await session.get(Folder, body.folder_id)
+                if target is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST, detail="folder not found"
+                    )
+            m.folder_id = body.folder_id
         await session.commit()
         count = await session.execute(
             select(Transcript.id).where(Transcript.meeting_id == meeting_id)
@@ -326,6 +380,161 @@ async def delete_meeting(meeting_id: str, request: Request) -> dict[str, object]
         await session.delete(m)
         await session.commit()
     return {"deleted": meeting_id}
+
+
+# ─── Merge ───────────────────────────────────────────────────────────────
+
+
+class MergeRequest(BaseModel):
+    # Meetings to fold into the target, in the order they should be appended.
+    source_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+class MergeResult(BaseModel):
+    target_id: str
+    merged_source_count: int
+    transcripts_merged: int
+
+
+@router.post("/meetings/{meeting_id}/merge", response_model=MergeResult)
+async def merge_meetings(meeting_id: str, body: MergeRequest, request: Request) -> MergeResult:
+    """Fold one or more source meetings into a target (#393).
+
+    Source transcripts, chunks (incl. their vec rows — kept valid because chunk
+    ids don't change, only ``meeting_id`` does), notes, decisions, action items
+    and conflicts are reassigned to the target. Transcript/chunk/note timestamps
+    are re-based onto a single continuous timeline so the merged transcript
+    reads in order. Sources are then deleted. The target's cached AI summary is
+    cleared so it regenerates over the combined transcript.
+
+    Note: SQLite FKs aren't enforced on this connection, so every child table is
+    reassigned explicitly rather than relying on cascades.
+    """
+    engine = _engine(request)
+
+    # De-dupe while preserving order; reject self-merge.
+    seen: set[str] = set()
+    source_ids: list[str] = []
+    for sid in body.source_ids:
+        if sid == meeting_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="cannot merge a meeting into itself"
+            )
+        if sid not in seen:
+            seen.add(sid)
+            source_ids.append(sid)
+
+    async with Session(engine) as session:
+        target = await session.get(Meeting, meeting_id)
+        if target is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="target meeting not found"
+            )
+
+        sources: list[Meeting] = []
+        for sid in source_ids:
+            src = await session.get(Meeting, sid)
+            if src is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"source meeting {sid} not found"
+                )
+            sources.append(src)
+
+        async def _max_audio_end(mid: str) -> float:
+            row = await session.execute(
+                select(func.max(Transcript.audio_end)).where(Transcript.meeting_id == mid)
+            )
+            return float(row.scalar() or 0.0)
+
+        # Running cursor: where the next source's timeline begins. Start just
+        # past the target's own content.
+        cursor = await _max_audio_end(meeting_id)
+        transcripts_merged = 0
+
+        for src in sources:
+            offset = cursor
+            src_span = await _max_audio_end(src.id)
+
+            # Transcripts.
+            t_rows = await session.execute(
+                select(Transcript).where(Transcript.meeting_id == src.id)
+            )
+            for t in t_rows.scalars().all():
+                t.meeting_id = meeting_id
+                t.audio_start += offset
+                t.audio_end += offset
+                transcripts_merged += 1
+
+            # Transcript chunks (vec rows keyed by chunk id stay valid).
+            c_rows = await session.execute(
+                select(TranscriptChunk).where(TranscriptChunk.meeting_id == src.id)
+            )
+            for c in c_rows.scalars().all():
+                c.meeting_id = meeting_id
+                c.audio_start += offset
+                c.audio_end += offset
+
+            # Notes pinned to the timeline.
+            n_rows = await session.execute(select(Note).where(Note.meeting_id == src.id))
+            for n in n_rows.scalars().all():
+                n.meeting_id = meeting_id
+                if n.audio_offset is not None:
+                    n.audio_offset += offset
+
+            # Decisions / action items / conflicts — no timeline, just reassign.
+            # Bulk UPDATE keeps the ORM identity map out of it (no stale
+            # cascade collections when we later delete the source).
+            await session.execute(
+                update(Decision)
+                .where(Decision.meeting_id == src.id)
+                .values(meeting_id=meeting_id)
+            )
+            await session.execute(
+                update(ActionItem)
+                .where(ActionItem.meeting_id == src.id)
+                .values(meeting_id=meeting_id)
+            )
+            await session.execute(
+                update(Conflict)
+                .where(Conflict.meeting_id == src.id)
+                .values(meeting_id=meeting_id)
+            )
+
+            # Extend the target's end time to cover this source.
+            if src.ended_at is not None and (
+                target.ended_at is None or src.ended_at > target.ended_at
+            ):
+                target.ended_at = src.ended_at
+
+            cursor = offset + src_span
+
+        # The target's cached summary is now stale — drop it so the next
+        # post-meeting run regenerates over the full merged transcript.
+        from meetwit.models import Summary
+
+        await session.execute(delete(Summary).where(Summary.meeting_id == meeting_id))
+
+        # Unlink calendar events of sources, then delete the source meetings.
+        for src in sources:
+            events = await session.execute(
+                select(CalendarEvent).where(CalendarEvent.meeting_id == src.id)
+            )
+            for ev in events.scalars().all():
+                ev.meeting_id = None
+            await session.delete(src)
+
+        await session.commit()
+
+    # Invalidate retrieval BM25 so reassigned chunks are reflected.
+    retriever: HybridRetriever | None = getattr(request.app.state, "retriever", None)
+    if retriever is not None:
+        retriever.invalidate()
+
+    return MergeResult(
+        target_id=meeting_id,
+        merged_source_count=len(sources),
+        transcripts_merged=transcripts_merged,
+    )
 
 
 # ─── Transcripts ─────────────────────────────────────────────────────────
