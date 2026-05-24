@@ -215,6 +215,82 @@ async def test_merge_rebases_timestamps_and_deletes_source(client: AsyncClient) 
     assert starts == sorted(starts)
 
 
+async def test_merge_multiple_sources_chain_in_order(client: AsyncClient) -> None:
+    """Two sources fold in sequence; each re-bases onto the running cursor."""
+    target = await _make_meeting(client, "T")
+    s1 = await _make_meeting(client, "S1")
+    s2 = await _make_meeting(client, "S2")
+    await _add_transcripts(client, target, [(0.0, 10.0, "t")])  # span 10
+    await _add_transcripts(client, s1, [(0.0, 5.0, "a")])  # span 5  -> +10
+    await _add_transcripts(client, s2, [(0.0, 7.0, "b")])  # span 7  -> +15
+
+    r = await client.post(f"/meetings/{target}/merge", json={"source_ids": [s1, s2]})
+    assert r.status_code == 200, r.text
+    assert r.json()["merged_source_count"] == 2
+
+    segs = (await client.get(f"/meetings/{target}")).json()["transcripts"]
+    assert [s["text"] for s in segs] == ["t", "a", "b"]
+    starts = [s["audio_start"] for s in segs]
+    # t at 0; s1 after target's 10s; s2 after target(10)+s1(5)=15.
+    assert starts == [0.0, 10.0, 15.0]
+    assert starts == sorted(starts)  # strictly ordered, no overlap
+    # Both sources deleted.
+    assert (await client.get(f"/meetings/{s1}")).status_code == 404
+    assert (await client.get(f"/meetings/{s2}")).status_code == 404
+
+
+async def test_merge_into_empty_target(client: AsyncClient) -> None:
+    """Target has no transcripts → cursor starts at 0, source keeps its times."""
+    target = await _make_meeting(client, "empty")
+    source = await _make_meeting(client, "src")
+    await _add_transcripts(client, source, [(0.0, 4.0, "x"), (4.0, 9.0, "y")])
+
+    r = await client.post(f"/meetings/{target}/merge", json={"source_ids": [source]})
+    assert r.status_code == 200, r.text
+
+    segs = (await client.get(f"/meetings/{target}")).json()["transcripts"]
+    assert [s["text"] for s in segs] == ["x", "y"]
+    assert [s["audio_start"] for s in segs] == [0.0, 4.0]  # no spurious offset
+
+
+async def test_merge_moves_decisions_and_notes(client: AsyncClient) -> None:
+    """Non-transcript children (notes, decisions) follow the merge."""
+    target = await _make_meeting(client, "T")
+    source = await _make_meeting(client, "S")
+    await _add_transcripts(client, target, [(0.0, 5.0, "t")])
+    await _add_transcripts(client, source, [(0.0, 3.0, "s")])
+    await client.post(f"/meetings/{source}/notes", json={"text": "src note", "audio_offset": 1.0})
+
+    r = await client.post(f"/meetings/{target}/merge", json={"source_ids": [source]})
+    assert r.status_code == 200
+
+    notes = (await client.get(f"/meetings/{target}/notes")).json()
+    assert len(notes) == 1
+    assert notes[0]["text"] == "src note"
+    # Note's offset re-based by target's 5s span.
+    assert notes[0]["audio_offset"] == 6.0
+
+
+async def test_folder_delete_rehomes_deeply_nested(client: AsyncClient) -> None:
+    """Deleting a top folder rehomes meetings nested 3 levels down to root."""
+    a = (await client.post("/folders", json={"name": "A"})).json()["id"]
+    b = (await client.post("/folders", json={"name": "B", "parent_id": a})).json()["id"]
+    c = (await client.post("/folders", json={"name": "C", "parent_id": b})).json()["id"]
+
+    mid = await _make_meeting(client, "deep")
+    await client.patch(f"/meetings/{mid}", json={"folder_id": c, "set_folder": True})
+
+    # Delete the top-level folder; the deeply-nested meeting must survive at root.
+    r = await client.delete(f"/folders/{a}")
+    assert r.status_code == 200
+    detail = await client.get(f"/meetings/{mid}")
+    assert detail.status_code == 200
+    assert detail.json()["meeting"]["folder_id"] is None
+    # All three folders gone.
+    folders = (await client.get("/folders")).json()
+    assert folders == []
+
+
 async def test_merge_self_rejected(client: AsyncClient) -> None:
     mid = await _make_meeting(client)
     r = await client.post(f"/meetings/{mid}/merge", json={"source_ids": [mid]})
