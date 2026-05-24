@@ -118,8 +118,15 @@ export async function onTranscriptUpdate(
   return listen<TranscriptSegment>('transcript-update', (e) => handler(e.payload));
 }
 
-export async function asrStart(model: string): Promise<{ running: boolean; model: string | null }> {
-  return invoke('asr_start', { model });
+export async function asrStart(
+  model: string,
+  opts: { language?: string | undefined; extraPrompt?: string | undefined } = {},
+): Promise<{ running: boolean; model: string | null }> {
+  return invoke('asr_start', {
+    model,
+    language: opts.language ?? null,
+    extraPrompt: opts.extraPrompt ?? null,
+  });
 }
 
 export async function asrStop(): Promise<void> {
@@ -147,8 +154,40 @@ export interface RetranscribeSegment {
 export async function retranscribeFile(
   audioPath: string,
   model: string,
+  opts: { language?: string | undefined; extraPrompt?: string | undefined } = {},
 ): Promise<RetranscribeSegment[]> {
-  return invoke<RetranscribeSegment[]>('retranscribe_file', { audioPath, model });
+  return invoke<RetranscribeSegment[]>('retranscribe_file', {
+    audioPath,
+    model,
+    language: opts.language ?? null,
+    extraPrompt: opts.extraPrompt ?? null,
+  });
+}
+
+export interface ImportedAudio {
+  /** Absolute path the file was copied to inside the recordings dir. */
+  audio_path: string;
+  /** Transcribed segments (already on an absolute timeline). */
+  segments: RetranscribeSegment[];
+}
+
+/**
+ * Import an arbitrary audio file (#336/#425): copies it into the recordings
+ * directory (so the retranscribe security boundary holds) and transcribes it
+ * with the given model. Returns the copied path + segments; the caller creates
+ * a meeting and PUTs the transcripts.
+ */
+export async function importAudioFile(
+  sourcePath: string,
+  model: string,
+  opts: { language?: string | undefined; extraPrompt?: string | undefined } = {},
+): Promise<ImportedAudio> {
+  return invoke<ImportedAudio>('import_audio_file', {
+    sourcePath,
+    model,
+    language: opts.language ?? null,
+    extraPrompt: opts.extraPrompt ?? null,
+  });
 }
 
 // ─── Mixer ────────────────────────────────────────────────────────────

@@ -4,19 +4,17 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
   Beaker,
+  BookText,
   CheckCircle2,
-  Copy as CopyIcon,
   FolderOpen,
+  Languages,
   Mic,
   Settings2,
+  ShieldCheck,
   Sparkles,
   Volume2,
 } from 'lucide-react';
-import {
-  listCalendarAccounts,
-  llmStatus,
-  type LlmStatus,
-} from '@/lib/backend';
+import { listCalendarAccounts, llmStatus, type LlmStatus } from '@/lib/backend';
 import {
   asrModels,
   audioInputDevices,
@@ -29,16 +27,13 @@ import {
   type BackendStatus,
 } from '@/lib/tauri';
 import { useBackendReady } from '@/lib/useBackendReady';
-import { Badge, Button, Card, Select, Tabs } from '@/components/ui';
+import { Badge, Button, Card, Select, Tabs, Textarea } from '@/components/ui';
+import { SUMMARY_LANGUAGES } from '@/lib/languages';
 import { ModelDownloadCard } from '@/components/ModelDownloadCard';
 import { FloatingDownloadTile } from '@/components/FloatingDownloadTile';
 import { CalendarSettings } from '@/components/CalendarSettings';
 import { toast } from '@/components/ToastStack';
-import {
-  getPrefs,
-  savePrefs as sharedSavePrefs,
-  type UserPrefs,
-} from '@/lib/prefs';
+import { getPrefs, savePrefs as sharedSavePrefs, type UserPrefs } from '@/lib/prefs';
 
 export const Route = createFileRoute('/settings')({
   component: SettingsPage,
@@ -99,14 +94,6 @@ function SettingsPage() {
   const [backend, setBackend] = useState<BackendStatus | null>(null);
   const [llm, setLlm] = useState<LlmStatus | null>(null);
   const [asr, setAsr] = useState<AsrModel[]>([]);
-  const [userId] = useState<string>(() => {
-    let id = localStorage.getItem('meetwit:user-id');
-    if (!id) {
-      id = `user-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-      localStorage.setItem('meetwit:user-id', id);
-    }
-    return id;
-  });
   const { ready: backendReady } = useBackendReady();
 
   // Active download tracker (Settings → Transcription page).
@@ -161,7 +148,9 @@ function SettingsPage() {
         if (e.payload.finished) {
           setActiveDl(null);
           // Refresh model list so the present/absent flag updates.
-          void asrModels().then(setAsr).catch(() => undefined);
+          void asrModels()
+            .then(setAsr)
+            .catch(() => undefined);
           toast({ title: 'Whisper model downloaded', tone: 'success' });
         }
       },
@@ -191,7 +180,7 @@ function SettingsPage() {
   return (
     <div className="mx-auto max-w-3xl px-10 py-10">
       <header className="mb-6">
-        <p className="text-[11px] font-semibold tracking-wider uppercase text-zinc-400">System</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">System</p>
         <h1 className="mt-1 text-[24px] font-semibold tracking-tight text-zinc-900">Settings</h1>
       </header>
 
@@ -208,30 +197,17 @@ function SettingsPage() {
         className="mb-7"
       />
 
-      {tab === 'general' && (
-        <GeneralTab
-          prefs={prefs}
-          onChange={setPrefs}
-          backend={backend}
-          userId={userId}
-        />
-      )}
-      {tab === 'recordings' && (
-        <RecordingsTab prefs={prefs} onChange={setPrefs} />
-      )}
+      {tab === 'general' && <GeneralTab prefs={prefs} onChange={setPrefs} backend={backend} />}
+      {tab === 'recordings' && <RecordingsTab prefs={prefs} onChange={setPrefs} />}
       {tab === 'transcription' && (
         <TranscriptionTab
           asr={asr}
           activeModel={prefs.transcriptModel}
-          onPick={(m) =>
-            setPrefs((p) => ({ ...p, transcriptModel: m }))
-          }
+          onPick={(m) => setPrefs((p) => ({ ...p, transcriptModel: m }))}
           onDownload={(m) => void downloadWhisper(m)}
         />
       )}
-      {tab === 'summary' && (
-        <SummaryTab prefs={prefs} onChange={setPrefs} llm={llm} />
-      )}
+      {tab === 'summary' && <SummaryTab prefs={prefs} onChange={setPrefs} llm={llm} />}
       {tab === 'beta' && <BetaTab />}
 
       {activeDl && (
@@ -342,12 +318,10 @@ function GeneralTab({
   prefs,
   onChange,
   backend,
-  userId,
 }: {
   prefs: PrefState;
   onChange: (p: PrefState) => void;
   backend: BackendStatus | null;
-  userId: string;
 }) {
   const navigate = useNavigate();
   // Whether a calendar is connected — gates the "use calendar to remind me"
@@ -445,8 +419,8 @@ function GeneralTab({
           </div>
         </div>
         <p className="mt-2 text-[11px] text-zinc-500">
-          <strong>Note:</strong> Database and models are stored in your application data
-          directory for unified management.
+          <strong>Note:</strong> Database and models are stored in your application data directory
+          for unified management.
         </p>
       </Section>
 
@@ -493,50 +467,30 @@ function GeneralTab({
       </Section>
 
       <Section
-        title="Usage Analytics"
-        description="Help us improve Meetwit by sharing anonymous usage data. No personal content is collected — everything stays on your device."
+        title="Privacy"
+        description="Meetwit sends zero telemetry. No analytics, no usage tracking, no crash reporting — there is no opt-in because there is nothing to opt into."
       >
-        <ToggleRow
-          title="Enable Analytics"
-          description="Anonymous usage patterns only."
-          checked={prefs.analytics}
-          onChange={(v) => onChange({ ...prefs, analytics: v })}
-        />
-
-        <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-3">
-          <p className="text-[12px] font-medium text-zinc-700">Your User ID</p>
-          <p className="mt-0.5 text-[11px] text-zinc-500">
-            Share this ID when reporting issues to help us investigate your logs.
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+          <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-emerald-900">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Nothing leaves this Mac
           </p>
-          <div className="mt-2 flex items-center gap-2">
-            <code className="flex-1 truncate rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1.5 font-mono text-[11px] text-zinc-700">
-              {userId}
-            </code>
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<CopyIcon className="h-3 w-3" />}
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(userId);
-                  toast({ title: 'Copied', tone: 'success', durationMs: 1800 });
-                } catch {
-                  /* ignore */
-                }
-              }}
-            >
-              Copy
-            </Button>
-          </div>
+          <p className="mt-1 text-[11.5px] leading-relaxed text-emerald-800/90">
+            The app talks only to <code className="font-mono">localhost</code> — the bundled sidecar
+            and your own Ollama. Your meetings, transcripts, and recordings never touch a network.
+            This is verifiable: search the source for any analytics SDK and you will not find one.
+          </p>
         </div>
       </Section>
 
       <div className="mt-2 rounded-xl border border-zinc-200 bg-blue-50/40 px-3.5 py-2.5 text-[12px] text-zinc-700">
-        <strong>Your meetings, transcripts, and recordings remain completely private and local.</strong>{' '}
+        <strong>
+          Your meetings, transcripts, and recordings remain completely private and local.
+        </strong>{' '}
         <a
           href="#"
           onClick={(e) => e.preventDefault()}
-          className="text-brand-700 underline hover:text-brand-800"
+          className="text-brand-700 hover:text-brand-800 underline"
         >
           View Privacy Policy
         </a>
@@ -639,9 +593,7 @@ function RecordingsTab({
                 </option>
               ))}
             </Select>
-            <p className="mt-1 text-[11px] text-zinc-400">
-              Applies to the next recording.
-            </p>
+            <p className="mt-1 text-[11px] text-zinc-400">Applies to the next recording.</p>
           </div>
           <div>
             <label className="flex items-center gap-1.5 text-[12px] font-medium text-zinc-700">
@@ -704,7 +656,7 @@ function BackendCard({
       className={[
         'w-full rounded-lg border p-3 text-left transition-all',
         active
-          ? 'border-brand-400 bg-brand-50/40 shadow-xs ring-1 ring-brand-200'
+          ? 'border-brand-400 bg-brand-50/40 shadow-xs ring-brand-200 ring-1'
           : 'border-zinc-200 bg-white hover:border-zinc-300',
         disabled ? 'cursor-not-allowed opacity-50' : '',
       ].join(' ')}
@@ -714,9 +666,7 @@ function BackendCard({
         <span
           className={[
             'rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
-            active
-              ? 'bg-brand-100 text-brand-700'
-              : 'bg-zinc-100 text-zinc-500',
+            active ? 'bg-brand-100 text-brand-700' : 'bg-zinc-100 text-zinc-500',
           ].join(' ')}
         >
           {active ? 'Active' : 'Disabled'}
@@ -756,7 +706,7 @@ function TranscriptionTab({
                   className={[
                     'flex items-center justify-between rounded-xl border p-3 transition-all',
                     active
-                      ? 'border-brand-400 bg-brand-50/30 shadow-xs ring-1 ring-brand-200'
+                      ? 'border-brand-400 bg-brand-50/30 shadow-xs ring-brand-200 ring-1'
                       : 'border-zinc-200 bg-white',
                   ].join(' ')}
                 >
@@ -764,7 +714,11 @@ function TranscriptionTab({
                     <div className="flex items-center gap-2">
                       <p className="text-[13px] font-semibold text-zinc-900">{v.label}</p>
                       <span className="font-mono text-[10px] text-zinc-400">{v.model}</span>
-                      {v.tag && <Badge color="brand" size="xs">{v.tag}</Badge>}
+                      {v.tag && (
+                        <Badge color="brand" size="xs">
+                          {v.tag}
+                        </Badge>
+                      )}
                       {present && (
                         <Badge color="success" size="xs" dot>
                           Downloaded
@@ -806,8 +760,8 @@ function TranscriptionTab({
         description="Quantized variants (q5_1) trade a small bit of accuracy for faster decoding."
       >
         <p className="text-[12px] text-zinc-500">
-          Coming in v1.1 — q5_1 quantized variants of small/base/medium will appear here
-          for power users on low-RAM machines.
+          Coming in v1.1 — q5_1 quantized variants of small/base/medium will appear here for power
+          users on low-RAM machines.
         </p>
       </Section>
     </>
@@ -910,6 +864,42 @@ function SummaryTab({
           />
         )}
       </Section>
+
+      <Section
+        title="Summary Language"
+        description="The language new meeting summaries are written in — independent of what's spoken. You can also change it per meeting from the summary screen."
+      >
+        <label className="text-[12px] font-medium text-zinc-700">Default language</label>
+        <Select
+          className="mt-1.5"
+          leftIcon={<Languages className="h-3.5 w-3.5" />}
+          value={prefs.summaryLanguage}
+          onChange={(e) => onChange({ ...prefs, summaryLanguage: e.target.value })}
+        >
+          {SUMMARY_LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.name} — {l.native}
+            </option>
+          ))}
+        </Select>
+      </Section>
+
+      <Section
+        title="Domain Vocabulary"
+        description="Prime transcription with names, products, and jargon it tends to mishear. One term per line or comma-separated — e.g. client names, codenames, acronyms."
+      >
+        <Textarea
+          rows={4}
+          value={prefs.domainVocabulary}
+          onChange={(e) => onChange({ ...prefs, domainVocabulary: e.target.value })}
+          placeholder={'Acme Corp\nKristian Eikemo\nKubernetes, gRPC, OKR'}
+          className="font-mono text-[12px]"
+        />
+        <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-zinc-400">
+          <BookText className="h-3 w-3" />
+          Applied as a Whisper priming hint on your next recording.
+        </p>
+      </Section>
     </>
   );
 }
@@ -941,7 +931,7 @@ function LocalModelCard({
       className={[
         'w-full rounded-xl border p-3 text-left transition-all',
         selected
-          ? 'border-brand-400 bg-brand-50/30 shadow-xs ring-1 ring-brand-200'
+          ? 'border-brand-400 bg-brand-50/30 shadow-xs ring-brand-200 ring-1'
           : 'border-zinc-200 bg-white hover:border-zinc-300',
       ].join(' ')}
     >
@@ -961,14 +951,17 @@ function LocalModelCard({
             </Badge>
           )}
         </div>
-        {selected && <Badge color="brand" size="xs">Selected</Badge>}
+        {selected && (
+          <Badge color="brand" size="xs">
+            Selected
+          </Badge>
+        )}
       </div>
       <p className="mt-1 text-[11.5px] leading-relaxed text-zinc-500">{ramHint}</p>
       <p className="mt-0.5 text-[11px] tabular-nums text-zinc-400">{size}</p>
       {!installed && (
         <p className="mt-1.5 font-mono text-[11px] text-zinc-600">
-          Run:{' '}
-          <code className="rounded bg-zinc-100 px-1.5 py-0.5">ollama pull {modelId}</code>
+          Run: <code className="rounded bg-zinc-100 px-1.5 py-0.5">ollama pull {modelId}</code>
         </p>
       )}
     </button>
@@ -1001,11 +994,7 @@ function RemoteProviderForm({
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className="text-[12px] font-medium text-zinc-700">Model</label>
-          <Select
-            className="mt-1.5"
-            value={model}
-            onChange={(e) => onModelChange(e.target.value)}
-          >
+          <Select className="mt-1.5" value={model} onChange={(e) => onModelChange(e.target.value)}>
             {list.map((m) => (
               <option key={m} value={m}>
                 {m}
@@ -1021,7 +1010,7 @@ function RemoteProviderForm({
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="sk-…"
-              className="flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[13px] text-zinc-800 shadow-xs focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
+              className="shadow-xs focus:border-brand-400 focus:ring-brand-100 flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[13px] text-zinc-800 focus:outline-none focus:ring-2"
             />
             <button
               type="button"
@@ -1034,9 +1023,9 @@ function RemoteProviderForm({
         </div>
       </div>
       <div className="rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-[11.5px] text-amber-900">
-        Keys stay on this Mac and ride each request directly to the provider — never to our
-        servers. Heads-up: they&apos;re currently stored unencrypted in local app storage;
-        encrypted macOS Keychain storage is coming next.
+        Keys stay on this Mac and ride each request directly to the provider — never to our servers.
+        Heads-up: they&apos;re currently stored unencrypted in local app storage; encrypted macOS
+        Keychain storage is coming next.
       </div>
       <div className="flex justify-end">
         <Button

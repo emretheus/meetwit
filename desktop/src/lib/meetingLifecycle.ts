@@ -42,6 +42,13 @@ export async function startMeeting(existingMeeting?: Meeting): Promise<void> {
   try {
     const prefs = getPrefs();
     const m = existingMeeting ?? (await createMeeting({}));
+    // Carry the user's default summary language onto the new meeting (#413) so
+    // auto-summary and later re-runs use it. Backend defaults to 'en', so only
+    // PATCH when the preference differs. Best-effort — never block recording.
+    if (!existingMeeting && prefs.summaryLanguage && prefs.summaryLanguage !== 'en') {
+      void patchMeeting(m.id, { summary_language: prefs.summaryLanguage }).catch(() => undefined);
+      m.summary_language = prefs.summaryLanguage;
+    }
     store.setMeeting(m);
 
     await micStart(prefs.micDeviceId);
@@ -77,10 +84,16 @@ export async function startMeeting(existingMeeting?: Meeting): Promise<void> {
     const preferred = prefs.transcriptModel;
     const fallback = ['medium.en', 'small.en', 'tiny.en'];
     const candidates = [preferred, ...fallback.filter((m) => m !== preferred)];
+    // Domain vocabulary (#474) primes Whisper toward names/jargon; transcription
+    // language (#233) selects the spoken language for multilingual models.
+    const asrOpts = {
+      language: prefs.transcriptionLanguage || 'en',
+      extraPrompt: prefs.domainVocabulary.trim() || undefined,
+    };
     let started = false;
     for (const m of candidates) {
       try {
-        await asrStart(m);
+        await asrStart(m, asrOpts);
         // eslint-disable-next-line no-console
         console.info(`asr started with model ${m}`);
         started = true;
@@ -128,12 +141,17 @@ export async function pauseMeeting(): Promise<void> {
 export async function resumeMeeting(): Promise<void> {
   const store = useMeetingStore.getState();
   if (!store.running || !store.paused) return;
-  const preferred = getPrefs().transcriptModel;
+  const prefs = getPrefs();
+  const preferred = prefs.transcriptModel;
   const fallback = ['medium.en', 'small.en', 'tiny.en'];
   const candidates = [preferred, ...fallback.filter((m) => m !== preferred)];
+  const asrOpts = {
+    language: prefs.transcriptionLanguage || 'en',
+    extraPrompt: prefs.domainVocabulary.trim() || undefined,
+  };
   for (const m of candidates) {
     try {
-      await asrStart(m);
+      await asrStart(m, asrOpts);
       store.setPaused(false);
       return;
     } catch {

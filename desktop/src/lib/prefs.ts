@@ -10,7 +10,6 @@ export interface UserPrefs {
   saveAudio: boolean;
   startNotification: boolean;
   autoSummary: boolean;
-  analytics: boolean;
   notifications: boolean;
   summaryProvider: 'ollama' | 'openai' | 'anthropic' | 'groq' | 'openrouter';
   summaryModel: string;
@@ -22,6 +21,16 @@ export interface UserPrefs {
   autoDetect: boolean;
   /** Calendar-time reminders (nudge at event start). Needs a connected calendar. */
   calendarNudge: boolean;
+  /** Default ISO 639-1 language for new meetings' AI summaries (#413). */
+  summaryLanguage: string;
+  /** Custom domain vocabulary fed to Whisper as a priming hint (#474). Proper
+   *  nouns, product names, jargon — one per line or comma-separated. */
+  domainVocabulary: string;
+  /** Spoken/transcription language (#233). 'en' uses the bundled English-only
+   *  models; other codes require a downloaded multilingual model. */
+  transcriptionLanguage: string;
+  /** Sidebar meeting grouping (#424). */
+  sidebarGroupBy: 'none' | 'folder' | 'project';
 }
 
 export const PREFS_KEY = 'meetwit:prefs';
@@ -31,7 +40,6 @@ export function defaultPrefs(): UserPrefs {
     saveAudio: true,
     startNotification: true,
     autoSummary: true,
-    analytics: false,
     notifications: false,
     summaryProvider: 'ollama',
     summaryModel: 'gemma3:1b',
@@ -40,6 +48,10 @@ export function defaultPrefs(): UserPrefs {
     micDeviceId: null,
     autoDetect: true,
     calendarNudge: true,
+    summaryLanguage: 'en',
+    domainVocabulary: '',
+    transcriptionLanguage: 'en',
+    sidebarGroupBy: 'none',
   };
 }
 
