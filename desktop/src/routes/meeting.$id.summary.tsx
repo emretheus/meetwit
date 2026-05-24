@@ -9,6 +9,7 @@ import {
   Edit3,
   FileDown,
   FileText,
+  GitMerge,
   Languages,
   MoreHorizontal,
   RefreshCw,
@@ -53,6 +54,7 @@ import { useMeetingStore, useRunning } from '@/stores/meetingStore';
 import { formatTime, groupSegmentsIntoTurns } from '@/lib/transcript';
 import { EditTitleModal } from '@/components/modals/EditTitleModal';
 import { LanguagePickerModal } from '@/components/modals/LanguagePickerModal';
+import { MergeMeetingModal } from '@/components/modals/MergeMeetingModal';
 import { RetranscribeModal } from '@/components/modals/RetranscribeModal';
 import { TemplatePickerModal } from '@/components/modals/TemplatePickerModal';
 import { SummaryEditor } from '@/components/editor/SummaryEditor';
@@ -126,6 +128,7 @@ function SummaryView({ id }: { id: string }) {
   const [showRetranscribe, setShowRetranscribe] = useState(false);
   const [showTemplate, setShowTemplate] = useState(false);
   const [showLanguage, setShowLanguage] = useState(false);
+  const [showMerge, setShowMerge] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [highlightId, setHighlightId] = useState<number | null>(null);
   const [savedHint, setSavedHint] = useState<string | null>(null);
@@ -407,6 +410,14 @@ function SummaryView({ id }: { id: string }) {
                       setShowLanguage(true);
                     }}
                   />
+                  <MenuItem
+                    icon={<GitMerge className="h-3.5 w-3.5" />}
+                    label="Merge meetings…"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setShowMerge(true);
+                    }}
+                  />
                   <div className="my-1 h-px bg-zinc-100" />
                   <MenuItem
                     icon={<FileText className="h-3.5 w-3.5" />}
@@ -649,6 +660,12 @@ function SummaryView({ id }: { id: string }) {
         current={meeting.summary_language ?? 'en'}
         onClose={() => setShowLanguage(false)}
         onApply={(language) => void runProcess({ language })}
+      />
+      <MergeMeetingModal
+        open={showMerge}
+        targetId={id}
+        onClose={() => setShowMerge(false)}
+        onMerged={() => void refresh()}
       />
     </div>
   );

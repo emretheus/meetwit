@@ -92,6 +92,7 @@ pub fn run() {
             commands::ollama_available,
             commands::ollama_pull,
             commands::save_export,
+            commands::pick_audio_file,
             commands::open_system_settings,
             commands::calendar_available,
             commands::calendar_connect_google,
