@@ -260,12 +260,7 @@ pub struct AsrModelStatus {
 #[tauri::command]
 pub fn asr_models() -> Vec<AsrModelStatus> {
     let mut out = Vec::new();
-    for model in [
-        ModelInfo::TinyEn,
-        ModelInfo::BaseEn,
-        ModelInfo::SmallEn,
-        ModelInfo::MediumEn,
-    ] {
+    for model in ModelInfo::ALL {
         if let Some(path) = model_path(model) {
             out.push(AsrModelStatus {
                 model: format!("{model:?}").to_lowercase(),
@@ -278,6 +273,22 @@ pub fn asr_models() -> Vec<AsrModelStatus> {
     out
 }
 
+/// Decide the spoken-language hint to pass to whisper for a given model.
+///
+/// English-only models are always decoded as English (passing any other code
+/// to a `.en` model yields garbage). For multilingual models we honor the
+/// caller's ISO 639-1 code; `None`/empty/"en" falls back to "en", and "auto"
+/// is passed through for whisper's own language detection.
+fn resolve_language(model: ModelInfo, requested: Option<&str>) -> String {
+    if !model.is_multilingual() {
+        return "en".to_string();
+    }
+    match requested.map(|s| s.trim().to_ascii_lowercase()) {
+        Some(code) if !code.is_empty() => code,
+        _ => "en".to_string(),
+    }
+}
+
 /// Start streaming ASR using the chosen model. Requires the mixer to be
 /// running so it has a `voice_ring` to consume.
 #[tauri::command]
@@ -285,14 +296,15 @@ pub fn asr_start(
     app: AppHandle,
     state: State<'_, AppState>,
     model: String,
+    language: Option<String>,
+    extra_prompt: Option<String>,
 ) -> Result<AsrStatus, String> {
-    let model_info = match model.as_str() {
-        "tiny-en" | "tinyen" | "tiny.en" => ModelInfo::TinyEn,
-        "base-en" | "baseen" | "base.en" => ModelInfo::BaseEn,
-        "small-en" | "smallen" | "small.en" => ModelInfo::SmallEn,
-        "medium-en" | "mediumen" | "medium.en" => ModelInfo::MediumEn,
-        other => return Err(format!("unknown model: {other}")),
-    };
+    let model_info =
+        ModelInfo::from_label(&model).ok_or_else(|| format!("unknown model: {model}"))?;
+    // Resolve the spoken-language hint (#233). English-only models must stay on
+    // "en"; a non-en language is only honored on a multilingual model.
+    let lang = resolve_language(model_info, language.as_deref());
+    let extra_prompt = extra_prompt.filter(|s| !s.trim().is_empty());
     let path = model_path(model_info).ok_or_else(|| "no user data dir".to_string())?;
     if !path.exists() {
         return Err(format!(
@@ -328,18 +340,25 @@ pub fn asr_start(
     }
 
     let app_emit = app.clone();
-    let streamer = AsrStreamer::start(engine, voice_ring, move |event| match event {
-        StreamerEvent::Committed(seg) => {
-            if let Err(err) = app_emit.emit("transcript-update", seg) {
-                log::warn!("emit transcript-update failed: {err}");
-            }
-        }
-        StreamerEvent::Partial(partial) => {
-            if let Err(err) = app_emit.emit("transcript-partial", partial) {
-                log::warn!("emit transcript-partial failed: {err}");
-            }
-        }
-    });
+    let streamer =
+        AsrStreamer::start(
+            engine,
+            voice_ring,
+            lang,
+            extra_prompt,
+            move |event| match event {
+                StreamerEvent::Committed(seg) => {
+                    if let Err(err) = app_emit.emit("transcript-update", seg) {
+                        log::warn!("emit transcript-update failed: {err}");
+                    }
+                }
+                StreamerEvent::Partial(partial) => {
+                    if let Err(err) = app_emit.emit("transcript-partial", partial) {
+                        log::warn!("emit transcript-partial failed: {err}");
+                    }
+                }
+            },
+        );
     *asr_guard = Some(streamer);
     log::info!("asr started with model {}", model_info.label());
 
@@ -386,14 +405,11 @@ pub struct RetranscribeSegment {
 pub async fn retranscribe_file(
     audio_path: String,
     model: String,
+    language: Option<String>,
+    extra_prompt: Option<String>,
 ) -> Result<Vec<RetranscribeSegment>, String> {
-    let model_info = match model.as_str() {
-        "tiny-en" | "tinyen" | "tiny.en" => ModelInfo::TinyEn,
-        "base-en" | "baseen" | "base.en" => ModelInfo::BaseEn,
-        "small-en" | "smallen" | "small.en" => ModelInfo::SmallEn,
-        "medium-en" | "mediumen" | "medium.en" => ModelInfo::MediumEn,
-        other => return Err(format!("unknown model: {other}")),
-    };
+    let model_info =
+        ModelInfo::from_label(&model).ok_or_else(|| format!("unknown model: {model}"))?;
     let model_file = model_path(model_info).ok_or_else(|| "no user data dir".to_string())?;
     if !model_file.exists() {
         return Err(format!(
@@ -416,8 +432,15 @@ pub async fn retranscribe_file(
         return Err("audio_path must be inside the recordings directory".to_string());
     }
 
+    let lang = resolve_language(model_info, language.as_deref());
+    let extra = extra_prompt.filter(|s| !s.trim().is_empty());
     tauri::async_runtime::spawn_blocking(move || {
-        run_retranscribe(&real_audio.to_string_lossy(), &model_file)
+        run_retranscribe(
+            &real_audio.to_string_lossy(),
+            &model_file,
+            &lang,
+            extra.as_deref(),
+        )
     })
     .await
     .map_err(|e| format!("retranscribe task panicked: {e}"))?
@@ -426,6 +449,8 @@ pub async fn retranscribe_file(
 fn run_retranscribe(
     audio_path: &str,
     model_file: &std::path::Path,
+    language: &str,
+    extra_prompt: Option<&str>,
 ) -> Result<Vec<RetranscribeSegment>, String> {
     use crate::asr::{DecodeOptions, WhisperEngine};
 
@@ -469,12 +494,13 @@ fn run_retranscribe(
         let window = &mono[offset..end];
         let base = offset as f64 / rate;
         let opts = DecodeOptions {
-            extra_prompt: None,
+            extra_prompt,
             prev_text: if prev_tail.is_empty() {
                 None
             } else {
                 Some(prev_tail.as_str())
             },
+            language: Some(language),
         };
         let segs = engine
             .transcribe_with(window, &opts)
@@ -496,6 +522,145 @@ fn run_retranscribe(
         out.len()
     );
     Ok(out)
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportedAudio {
+    pub audio_path: String,
+    pub segments: Vec<RetranscribeSegment>,
+}
+
+/// Import an arbitrary WAV file (#336/#425): copies it (normalized to 16 kHz
+/// mono) into the recordings directory so the retranscribe security boundary
+/// holds, then transcribes it. Returns the stored path + segments; the frontend
+/// creates a meeting and PUTs the transcripts.
+///
+/// Only WAV is supported (the only decoder we bundle is `hound`). Other formats
+/// surface a clear error rather than producing garbage.
+#[tauri::command]
+pub async fn import_audio_file(
+    source_path: String,
+    model: String,
+    language: Option<String>,
+    extra_prompt: Option<String>,
+) -> Result<ImportedAudio, String> {
+    let model_info =
+        ModelInfo::from_label(&model).ok_or_else(|| format!("unknown model: {model}"))?;
+    let model_file = model_path(model_info).ok_or_else(|| "no user data dir".to_string())?;
+    if !model_file.exists() {
+        return Err(format!(
+            "model file missing — download {} first",
+            model_info.label()
+        ));
+    }
+
+    let src = std::path::Path::new(&source_path);
+    if !src.exists() {
+        return Err("source file not found".to_string());
+    }
+    if !src
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("wav"))
+    {
+        return Err("only .wav files can be imported in this version".to_string());
+    }
+
+    // Normalize into the recordings dir as 16 kHz mono i16 (the format
+    // run_retranscribe + whisper expect), under a fresh id we control.
+    let recordings = recordings_dir()?;
+    std::fs::create_dir_all(&recordings).map_err(|e| format!("create recordings dir: {e}"))?;
+    // Unique, collision-resistant name without pulling in a uuid crate: epoch
+    // nanos are monotonic enough for one-at-a-time user imports.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let dest = recordings.join(format!("import-{stamp}.wav"));
+
+    let lang = resolve_language(model_info, language.as_deref());
+    let extra = extra_prompt.filter(|s| !s.trim().is_empty());
+    let dest_clone = dest.clone();
+    let segments = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+        normalize_wav_to_recordings(&source_path, &dest_clone)?;
+        run_retranscribe(
+            &dest_clone.to_string_lossy(),
+            &model_file,
+            &lang,
+            extra.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("import task panicked: {e}"))??;
+
+    Ok(ImportedAudio {
+        audio_path: dest.to_string_lossy().into_owned(),
+        segments,
+    })
+}
+
+/// Read any WAV, downmix to mono, linear-resample to 16 kHz, write i16 mono.
+fn normalize_wav_to_recordings(source: &str, dest: &std::path::Path) -> Result<(), String> {
+    const TARGET: u32 = 16_000;
+    let mut reader = hound::WavReader::open(source).map_err(|e| format!("open wav: {e}"))?;
+    let spec = reader.spec();
+    let raw: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Int => reader
+            .samples::<i32>()
+            .map(|s| s.map(|v| v as f32 / f32::from(i16::MAX)))
+            .collect::<Result<_, _>>()
+            .map_err(|e| format!("read samples: {e}"))?,
+        hound::SampleFormat::Float => reader
+            .samples::<f32>()
+            .collect::<Result<_, _>>()
+            .map_err(|e| format!("read samples: {e}"))?,
+    };
+    let channels = spec.channels.max(1) as usize;
+    let mono: Vec<f32> = if channels <= 1 {
+        raw
+    } else {
+        raw.chunks(channels)
+            .map(|c| c.iter().sum::<f32>() / channels as f32)
+            .collect()
+    };
+
+    // Linear resample to 16 kHz. Simple, dependency-free, and good enough for
+    // speech recognition (whisper is robust to mild resampling artifacts).
+    let in_rate = spec.sample_rate.max(1);
+    let out: Vec<f32> = if in_rate == TARGET {
+        mono
+    } else {
+        let ratio = f64::from(TARGET) / f64::from(in_rate);
+        let out_len = ((mono.len() as f64) * ratio).round() as usize;
+        let mut resampled = Vec::with_capacity(out_len);
+        for i in 0..out_len {
+            let src_pos = i as f64 / ratio;
+            let idx = src_pos.floor() as usize;
+            let frac = src_pos - idx as f64;
+            let a = mono.get(idx).copied().unwrap_or(0.0);
+            let b = mono.get(idx + 1).copied().unwrap_or(a);
+            resampled.push(a + (b - a) * frac as f32);
+        }
+        resampled
+    };
+
+    let out_spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: TARGET,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer =
+        hound::WavWriter::create(dest, out_spec).map_err(|e| format!("create wav: {e}"))?;
+    for s in out {
+        let v = (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16;
+        writer
+            .write_sample(v)
+            .map_err(|e| format!("write sample: {e}"))?;
+    }
+    writer
+        .finalize()
+        .map_err(|e| format!("finalize wav: {e}"))?;
+    Ok(())
 }
 
 // ─── Mixer commands ─────────────────────────────────────────────────────
@@ -613,13 +778,8 @@ pub async fn whisper_download(app: tauri::AppHandle, model: String) -> Result<St
 
     use futures_util::StreamExt;
 
-    let info = match model.as_str() {
-        "tiny.en" | "tiny-en" => crate::asr::ModelInfo::TinyEn,
-        "base.en" | "base-en" => crate::asr::ModelInfo::BaseEn,
-        "small.en" | "small-en" => crate::asr::ModelInfo::SmallEn,
-        "medium.en" | "medium-en" => crate::asr::ModelInfo::MediumEn,
-        other => return Err(format!("unknown model: {other}")),
-    };
+    let info = crate::asr::ModelInfo::from_label(&model)
+        .ok_or_else(|| format!("unknown model: {model}"))?;
     let dest = crate::asr::model_path(info).ok_or_else(|| "no user data dir".to_string())?;
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
