@@ -35,6 +35,7 @@ import {
 } from '@/components/ui';
 import { InsightsPanel } from '@/components/InsightsPanel';
 import { MeetingCopilot } from '@/components/MeetingCopilot';
+import { LiveNotesPanel } from '@/components/LiveNotesPanel';
 import { toast } from '@/components/ToastStack';
 import { getPrefs } from '@/lib/prefs';
 import { formatTime, groupSegmentsIntoTurns } from '@/lib/transcript';
@@ -73,6 +74,7 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [showCompliance, setShowCompliance] = useState(false);
+  const [rightTab, setRightTab] = useState<'copilot' | 'notes'>('copilot');
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -184,7 +186,7 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
                 if (e.key === 'Enter') void commitTitle();
                 if (e.key === 'Escape') setTitleDraft(null);
               }}
-              className="min-w-0 flex-1 rounded-md border border-brand-400 bg-white px-2 py-1 text-[15px] font-semibold tracking-tight text-zinc-900 focus:outline-none focus:ring-2 focus:ring-brand-100"
+              className="border-brand-400 focus:ring-brand-100 min-w-0 flex-1 rounded-md border bg-white px-2 py-1 text-[15px] font-semibold tracking-tight text-zinc-900 focus:outline-none focus:ring-2"
               placeholder="Untitled meeting"
             />
           ) : (
@@ -192,10 +194,10 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
               type="button"
               onClick={() => meeting && setTitleDraft(meeting.title ?? '')}
               disabled={!meeting}
-              className="truncate text-[15px] font-semibold tracking-tight text-zinc-900 transition hover:text-brand-700 disabled:cursor-default disabled:text-zinc-400"
+              className="hover:text-brand-700 truncate text-[15px] font-semibold tracking-tight text-zinc-900 transition disabled:cursor-default disabled:text-zinc-400"
               title={meeting ? 'Click to rename' : 'Start a meeting to enable rename'}
             >
-              {meeting ? meeting.title ?? 'Untitled meeting' : 'New recording'}
+              {meeting ? (meeting.title ?? 'Untitled meeting') : 'New recording'}
             </button>
           )}
           {meeting?.project && (
@@ -291,11 +293,7 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
               <>
                 <ToolbarButton
                   icon={
-                    paused ? (
-                      <Play className="h-3.5 w-3.5" />
-                    ) : (
-                      <Pause className="h-3.5 w-3.5" />
-                    )
+                    paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />
                   }
                   label={paused ? 'Resume' : 'Pause'}
                   onClick={() => void (paused ? resumeMeeting() : pauseMeeting())}
@@ -331,7 +329,7 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
             </span>
           </Toolbar>
 
-          <div ref={transcriptScrollRef} className="flex-1 overflow-y-auto px-7 pt-6 pb-28">
+          <div ref={transcriptScrollRef} className="flex-1 overflow-y-auto px-7 pb-28 pt-6">
             {segments.length === 0 && !running ? (
               <Empty
                 icon={<Mic className="h-5 w-5" />}
@@ -358,7 +356,7 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
                         }
                       }}
                       title="Copy line"
-                      className="mt-1 inline-flex h-5 shrink-0 items-center rounded-md bg-white px-1.5 font-mono text-[10px] tabular-nums text-zinc-500 ring-1 ring-inset ring-zinc-200 transition hover:bg-brand-50 hover:text-brand-700 hover:ring-brand-200"
+                      className="hover:bg-brand-50 hover:text-brand-700 hover:ring-brand-200 mt-1 inline-flex h-5 shrink-0 items-center rounded-md bg-white px-1.5 font-mono text-[10px] tabular-nums text-zinc-500 ring-1 ring-inset ring-zinc-200 transition"
                     >
                       {formatTime(turn.start)}
                     </button>
@@ -375,10 +373,34 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
           </div>
         </section>
 
-        {/* Right pane: live Copilot. The full summary lives on the note page;
-            during recording, Copilot is the live value. */}
+        {/* Right pane: live Copilot + manual Notes (#389). The full summary
+            lives on the note page; during recording these are the live value. */}
         <aside className="flex w-[440px] shrink-0 flex-col border-l border-zinc-200 bg-white">
-          <MeetingCopilot meetingId={meeting?.id ?? null} withToolbar />
+          <div className="flex shrink-0 items-center gap-1 border-b border-zinc-200 px-3 py-1.5">
+            {(['copilot', 'notes'] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setRightTab(t)}
+                className={[
+                  'rounded-md px-2.5 py-1 text-[12px] font-medium capitalize transition',
+                  rightTab === t
+                    ? 'bg-brand-50 text-brand-700'
+                    : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700',
+                ].join(' ')}
+              >
+                {t === 'copilot' ? 'Copilot' : 'Notes'}
+              </button>
+            ))}
+          </div>
+          {rightTab === 'copilot' ? (
+            <MeetingCopilot meetingId={meeting?.id ?? null} withToolbar />
+          ) : (
+            <LiveNotesPanel
+              meetingId={meeting?.id ?? null}
+              elapsedSeconds={elapsedMs !== null ? elapsedMs / 1000 : null}
+            />
+          )}
         </aside>
       </div>
     </div>
