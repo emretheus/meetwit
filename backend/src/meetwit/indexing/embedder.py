@@ -1,6 +1,13 @@
-"""BGE-small-en-v1.5 embedder.
+"""BGE-M3 multilingual embedder.
 
 Loads the model lazily on first encode — keeps process startup fast.
+
+V2 swapped BGE-small-en (384-dim, English-only) for BGE-M3 (1024-dim,
+multilingual) so retrieval, conflict detection, and cross-meeting Ask work
+in any language (#233/#427). The dimension change is destructive: the vec0
+virtual tables are recreated at 1024-dim and documents are re-indexed (see
+migration 0008). BGE-M3 is larger (~2.3 GB) and a bit slower than bge-small,
+which is the cost of multilingual support.
 """
 
 from __future__ import annotations
@@ -11,8 +18,8 @@ from collections.abc import Sequence
 import numpy as np
 from numpy.typing import NDArray
 
-DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
-EMBEDDING_DIM = 384
+DEFAULT_MODEL = "BAAI/bge-m3"
+EMBEDDING_DIM = 1024
 
 
 class Embedder:
