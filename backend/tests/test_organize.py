@@ -185,6 +185,20 @@ async def test_move_to_unknown_folder_rejected(client: AsyncClient) -> None:
     assert r.status_code == 400
 
 
+async def test_title_patch_does_not_clobber_folder(client: AsyncClient) -> None:
+    """A normal PATCH (rename) without set_folder must leave folder_id intact —
+    the sentinel guards against accidentally yanking a meeting back to root."""
+    folder = (await client.post("/folders", json={"name": "Keep"})).json()["id"]
+    mid = await _make_meeting(client)
+    await client.patch(f"/meetings/{mid}", json={"folder_id": folder, "set_folder": True})
+
+    # Rename only — no set_folder.
+    r = await client.patch(f"/meetings/{mid}", json={"title": "Renamed"})
+    assert r.status_code == 200
+    assert r.json()["title"] == "Renamed"
+    assert r.json()["folder_id"] == folder  # still in the folder
+
+
 # ─── Merge (#393) ────────────────────────────────────────────────────────
 
 
