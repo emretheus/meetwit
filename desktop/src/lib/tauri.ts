@@ -164,6 +164,11 @@ export async function retranscribeFile(
   });
 }
 
+/** Native "choose file" dialog for importing audio. Returns path or null. */
+export async function pickAudioFile(): Promise<string | null> {
+  return invoke<string | null>('pick_audio_file');
+}
+
 export interface ImportedAudio {
   /** Absolute path the file was copied to inside the recordings dir. */
   audio_path: string;

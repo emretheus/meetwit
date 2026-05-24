@@ -1,11 +1,19 @@
-import { createMeeting, patchMeeting, triggerPostMeeting, type Meeting } from '@/lib/backend';
+import {
+  createMeeting,
+  patchMeeting,
+  replaceTranscripts,
+  triggerPostMeeting,
+  type Meeting,
+} from '@/lib/backend';
 import {
   asrStart,
   asrStop,
+  importAudioFile,
   micStart,
   micStop,
   mixerStart,
   mixerStop,
+  pickAudioFile,
   systemAudioStart,
   systemAudioStop,
 } from '@/lib/tauri';
@@ -263,4 +271,61 @@ export async function stopMeeting(): Promise<void> {
   // the next recording starts with a fresh transcript + Copilot thread.
   store.setMeeting(null);
   store.resetAsk();
+}
+
+/**
+ * Import a prerecorded audio file as a completed meeting (#336/#425):
+ *  - native file picker (WAV)
+ *  - Rust transcribes it (copied into recordings, normalized to 16 kHz)
+ *  - create a `completed` meeting, store its transcripts + audio path
+ *  - auto-summary if enabled
+ *
+ * Returns the created meeting id, or null if the user cancelled. Throws on a
+ * real failure so the caller can surface it.
+ */
+export async function importAudioMeeting(): Promise<string | null> {
+  const source = await pickAudioFile();
+  if (!source) return null; // cancelled
+
+  const prefs = getPrefs();
+  const model = prefs.transcriptModel;
+  const result = await importAudioFile(source, model, {
+    language: prefs.transcriptionLanguage || 'en',
+    extraPrompt: prefs.domainVocabulary.trim() || undefined,
+  });
+
+  if (result.segments.length === 0) {
+    throw new Error('No speech was transcribed from that file.');
+  }
+
+  // Name the meeting after the source file (sans extension); the AI title pass
+  // will refine it if auto-summary runs.
+  const baseName =
+    source
+      .split('/')
+      .pop()
+      ?.replace(/\.[^.]+$/, '') ?? 'Imported audio';
+
+  const meeting = await createMeeting({ title: baseName });
+  await patchMeeting(meeting.id, {
+    status: 'completed',
+    audio_path: result.audio_path,
+    ended_at: new Date().toISOString(),
+    ...(prefs.summaryLanguage && prefs.summaryLanguage !== 'en'
+      ? { summary_language: prefs.summaryLanguage }
+      : {}),
+  });
+  await replaceTranscripts(
+    meeting.id,
+    result.segments.map((s) => ({
+      text: s.text,
+      audio_start: s.audio_start,
+      audio_end: s.audio_end,
+    })),
+  );
+
+  if (prefs.autoSummary) {
+    void triggerPostMeeting(meeting.id).catch(() => undefined);
+  }
+  return meeting.id;
 }
