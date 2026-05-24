@@ -98,9 +98,9 @@ class HybridRetriever:
         if not query:
             return []
 
-        # BGE recommends prefixing queries (not chunks) with this string for retrieval.
-        embed_query = "Represent this sentence for searching relevant passages: " + query
-        q_vec = self.embedder.encode_one(embed_query)
+        # BGE-M3 is instruction-free: unlike bge-small-en it does NOT want a
+        # "Represent this sentence…" query prefix, so we embed the raw query.
+        q_vec = self.embedder.encode_one(query)
         q_bytes = struct.pack(f"<{len(q_vec)}f", *q_vec)
 
         # 1. Vector search.
@@ -196,8 +196,8 @@ class HybridRetriever:
         if not query:
             return []
 
-        embed_query = "Represent this sentence for searching relevant passages: " + query
-        q_vec = self.embedder.encode_one(embed_query)
+        # BGE-M3 is instruction-free — embed the raw query (no prefix).
+        q_vec = self.embedder.encode_one(query)
         q_bytes = struct.pack(f"<{len(q_vec)}f", *q_vec)
 
         async with Session(self.engine) as session:
