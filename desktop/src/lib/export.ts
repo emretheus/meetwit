@@ -1,4 +1,11 @@
-import type { ActionItemOut, DecisionOut, Meeting, SummaryOut, TranscriptOut } from '@/lib/backend';
+import type {
+  ActionItemOut,
+  DecisionOut,
+  Meeting,
+  NoteOut,
+  SummaryOut,
+  TranscriptOut,
+} from '@/lib/backend';
 
 function fmtTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -35,6 +42,7 @@ export interface ExportData {
   decisions: DecisionOut[];
   actions: ActionItemOut[];
   transcripts: TranscriptOut[];
+  notes: NoteOut[];
 }
 
 /** Build a self-contained Markdown document for a meeting. */
@@ -73,6 +81,15 @@ export function buildMarkdown(d: ExportData): string {
     lines.push('| Task | Owner | Due | Status |', '| --- | --- | --- | --- |');
     for (const a of d.actions) {
       lines.push(`| ${a.task} | ${a.owner ?? '—'} | ${a.deadline ?? '—'} | ${a.status} |`);
+    }
+    lines.push('');
+  }
+
+  if (d.notes.length) {
+    lines.push('## Notes', '');
+    for (const n of d.notes) {
+      const ts = n.audio_offset !== null ? `**[${fmtTime(n.audio_offset)}]** ` : '';
+      lines.push(`- ${ts}${n.text}`);
     }
     lines.push('');
   }
@@ -138,6 +155,11 @@ export function buildJson(d: ExportData): string {
       summary_md: d.summaryMd,
       decisions: d.decisions,
       action_items: d.actions,
+      notes: d.notes.map((n) => ({
+        text: n.text,
+        audio_offset: n.audio_offset,
+        created_at: n.created_at,
+      })),
       transcript: d.transcripts.map((t) => ({
         speaker: t.speaker,
         text: t.text,

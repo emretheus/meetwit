@@ -604,11 +604,19 @@ fn normalize_wav_to_recordings(source: &str, dest: &std::path::Path) -> Result<(
     let mut reader = hound::WavReader::open(source).map_err(|e| format!("open wav: {e}"))?;
     let spec = reader.spec();
     let raw: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Int => reader
-            .samples::<i32>()
-            .map(|s| s.map(|v| v as f32 / f32::from(i16::MAX)))
-            .collect::<Result<_, _>>()
-            .map_err(|e| format!("read samples: {e}"))?,
+        hound::SampleFormat::Int => {
+            // Normalize by the file's actual bit depth, NOT a hardcoded i16
+            // scale. An imported 24/32-bit WAV has samples up to ±2^(bits-1);
+            // dividing by i16::MAX would overshoot ~256× and clip to sil ±1.0,
+            // turning the whole import into hard-clipped garbage.
+            let bits = spec.bits_per_sample.clamp(1, 32);
+            let max_amp = ((1i64 << (bits - 1)) - 1).max(1) as f32;
+            reader
+                .samples::<i32>()
+                .map(|s| s.map(|v| v as f32 / max_amp))
+                .collect::<Result<_, _>>()
+                .map_err(|e| format!("read samples: {e}"))?
+        }
         hound::SampleFormat::Float => reader
             .samples::<f32>()
             .collect::<Result<_, _>>()

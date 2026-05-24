@@ -28,6 +28,35 @@ function timeout(ms: number): Promise<never> {
 }
 
 /**
+ * Build the model-selection cascade for a given spoken language (#233).
+ *
+ * Critical: when transcribing a non-English language the fallbacks MUST be
+ * multilingual models — falling back to an English-only `.en` model would make
+ * the backend force language="en" and transcribe (e.g.) German as gibberish.
+ * For English we keep the `.en` fallbacks (faster + more accurate on English).
+ */
+function modelCandidates(preferred: string, language: string): string[] {
+  const fallback =
+    language === 'en' || language === ''
+      ? ['medium.en', 'small.en', 'tiny.en']
+      : ['medium', 'small', 'tiny'];
+  return [modelForLanguage(preferred, language), ...fallback].filter(
+    (m, i, arr) => arr.indexOf(m) === i,
+  );
+}
+
+/**
+ * Reconcile a model id with the spoken language. An English-only `.en` model
+ * can't transcribe other languages, so when the language is non-English we map
+ * a `.en` choice to its multilingual sibling (medium.en → medium). For English
+ * we leave it untouched.
+ */
+function modelForLanguage(model: string, language: string): string {
+  if (language === 'en' || language === '') return model;
+  return model.endsWith('.en') ? model.slice(0, -'.en'.length) : model;
+}
+
+/**
  * Start a new meeting end-to-end:
  *  - POST /meetings (sidecar)
  *  - start mic capture
@@ -89,13 +118,12 @@ export async function startMeeting(existingMeeting?: Meeting): Promise<void> {
     // tried first; if it's not on disk we fall through to smaller fallbacks.
     // Bigger = slower per segment but better quality on accented speech and
     // proper nouns.
-    const preferred = prefs.transcriptModel;
-    const fallback = ['medium.en', 'small.en', 'tiny.en'];
-    const candidates = [preferred, ...fallback.filter((m) => m !== preferred)];
     // Domain vocabulary (#474) primes Whisper toward names/jargon; transcription
     // language (#233) selects the spoken language for multilingual models.
+    const language = prefs.transcriptionLanguage || 'en';
+    const candidates = modelCandidates(prefs.transcriptModel, language);
     const asrOpts = {
-      language: prefs.transcriptionLanguage || 'en',
+      language,
       extraPrompt: prefs.domainVocabulary.trim() || undefined,
     };
     let started = false;
@@ -150,11 +178,10 @@ export async function resumeMeeting(): Promise<void> {
   const store = useMeetingStore.getState();
   if (!store.running || !store.paused) return;
   const prefs = getPrefs();
-  const preferred = prefs.transcriptModel;
-  const fallback = ['medium.en', 'small.en', 'tiny.en'];
-  const candidates = [preferred, ...fallback.filter((m) => m !== preferred)];
+  const language = prefs.transcriptionLanguage || 'en';
+  const candidates = modelCandidates(prefs.transcriptModel, language);
   const asrOpts = {
-    language: prefs.transcriptionLanguage || 'en',
+    language,
     extraPrompt: prefs.domainVocabulary.trim() || undefined,
   };
   for (const m of candidates) {
@@ -288,9 +315,10 @@ export async function importAudioMeeting(): Promise<string | null> {
   if (!source) return null; // cancelled
 
   const prefs = getPrefs();
-  const model = prefs.transcriptModel;
+  const language = prefs.transcriptionLanguage || 'en';
+  const model = modelForLanguage(prefs.transcriptModel, language);
   const result = await importAudioFile(source, model, {
-    language: prefs.transcriptionLanguage || 'en',
+    language,
     extraPrompt: prefs.domainVocabulary.trim() || undefined,
   });
 
