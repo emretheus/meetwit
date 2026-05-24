@@ -75,7 +75,7 @@ export async function createMeeting(
 
 export async function getMeeting(
   id: string,
-): Promise<{ meeting: Meeting; transcripts: TranscriptOut[] }> {
+): Promise<{ meeting: Meeting; transcripts: TranscriptOut[]; notes: NoteOut[] }> {
   return jsonFetch(`/meetings/${id}`);
 }
 
@@ -105,6 +105,116 @@ export async function replaceTranscripts(
   await jsonFetch(`/meetings/${meetingId}/transcripts`, {
     method: 'PUT',
     body: JSON.stringify({ segments }),
+  });
+}
+
+/** List meetings, optionally scoped to a folder (#424). */
+export async function listMeetingsInFolder(opts: {
+  folderId?: string;
+  rootOnly?: boolean;
+}): Promise<Meeting[]> {
+  const params = new URLSearchParams();
+  if (opts.folderId) params.set('folder_id', opts.folderId);
+  if (opts.rootOnly) params.set('root_only', 'true');
+  const qs = params.toString();
+  return jsonFetch<Meeting[]>(`/meetings${qs ? `?${qs}` : ''}`);
+}
+
+// ─── Notes (#389) ──────────────────────────────────────────────────────
+
+export interface NoteOut {
+  id: number;
+  meeting_id: string;
+  text: string;
+  audio_offset: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listNotes(meetingId: string): Promise<NoteOut[]> {
+  return jsonFetch<NoteOut[]>(`/meetings/${meetingId}/notes`);
+}
+
+export async function createNote(
+  meetingId: string,
+  body: { text: string; audio_offset?: number },
+): Promise<NoteOut> {
+  return jsonFetch<NoteOut>(`/meetings/${meetingId}/notes`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateNote(noteId: number, text: string): Promise<NoteOut> {
+  return jsonFetch<NoteOut>(`/notes/${noteId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ text }),
+  });
+}
+
+export async function deleteNote(noteId: number): Promise<void> {
+  await jsonFetch(`/notes/${noteId}`, { method: 'DELETE' });
+}
+
+// ─── Folders (#424) ────────────────────────────────────────────────────
+
+export interface FolderOut {
+  id: string;
+  parent_id: string | null;
+  name: string;
+  created_at: string;
+  meeting_count: number;
+}
+
+export async function listFolders(): Promise<FolderOut[]> {
+  return jsonFetch<FolderOut[]>('/folders');
+}
+
+export async function createFolder(name: string, parentId?: string): Promise<FolderOut> {
+  return jsonFetch<FolderOut>('/folders', {
+    method: 'POST',
+    body: JSON.stringify({ name, parent_id: parentId ?? null }),
+  });
+}
+
+export async function updateFolder(
+  folderId: string,
+  body: { name?: string; parentId?: string | null; setParent?: boolean },
+): Promise<FolderOut> {
+  return jsonFetch<FolderOut>(`/folders/${folderId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      name: body.name ?? null,
+      parent_id: body.parentId ?? null,
+      set_parent: body.setParent ?? false,
+    }),
+  });
+}
+
+export async function deleteFolder(folderId: string): Promise<void> {
+  await jsonFetch(`/folders/${folderId}`, { method: 'DELETE' });
+}
+
+/** Move a meeting into a folder (or to root with folderId=null) (#424). */
+export async function moveMeetingToFolder(
+  meetingId: string,
+  folderId: string | null,
+): Promise<Meeting> {
+  return patchMeeting(meetingId, { folder_id: folderId, set_folder: true });
+}
+
+// ─── Merge (#393) ──────────────────────────────────────────────────────
+
+export interface MergeResult {
+  target_id: string;
+  merged_source_count: number;
+  transcripts_merged: number;
+}
+
+export async function mergeMeetings(targetId: string, sourceIds: string[]): Promise<MergeResult> {
+  return jsonFetch<MergeResult>(`/meetings/${targetId}/merge`, {
+    method: 'POST',
+    body: JSON.stringify({ source_ids: sourceIds }),
   });
 }
 
