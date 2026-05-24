@@ -8,6 +8,10 @@ from typing import Any, Literal, Protocol
 
 import httpx
 
+# Bounded read timeout for streaming chat — a stalled/hostile Ollama must not
+# hold the request open forever (used by the live insights scanner).
+_CHAT_TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
+
 Role = Literal["system", "user", "assistant"]
 
 
@@ -59,6 +63,23 @@ class OllamaProvider:
             models = data.get("models", [])
             return [m.get("name", "") for m in models if m.get("name")]
 
+    async def chat(
+        self,
+        messages: Iterable[ChatMessage],
+        *,
+        model: str,
+        temperature: float = 0.2,
+    ) -> str:
+        """Non-streaming completion. Returns the full response text.
+
+        Use this for background tasks (insight scanning, summarisation) where
+        you don't need token-level streaming and want a single string back.
+        """
+        buf: list[str] = []
+        async for token in self.stream_chat(messages, model=model, temperature=temperature):
+            buf.append(token)
+        return "".join(buf)
+
     async def stream_chat(
         self,
         messages: Iterable[ChatMessage],
@@ -73,7 +94,7 @@ class OllamaProvider:
             "options": {"temperature": temperature},
         }
         async with (
-            httpx.AsyncClient(timeout=httpx.Timeout(None)) as client,
+            httpx.AsyncClient(timeout=_CHAT_TIMEOUT) as client,
             client.stream("POST", f"{self.base_url}/api/chat", json=payload) as resp,
         ):
             resp.raise_for_status()

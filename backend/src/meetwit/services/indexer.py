@@ -49,11 +49,48 @@ def file_hash(path: Path, chunk_size: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+# Bound a single index request so a caller can't walk a huge tree (e.g. the
+# whole home dir) and exhaust memory/CPU, and so individual giant files don't
+# blow up parsing.
+_MAX_FILES = 5_000
+_MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB per document
+
+
 def discover_files(root: Path) -> list[Path]:
     if not root.exists() or not root.is_dir():
         raise FileNotFoundError(f"folder not found: {root}")
+    if root.is_symlink():
+        # Don't follow a symlinked root out to an arbitrary location.
+        raise ValueError("indexed folder must not be a symlink")
+    # Resolve the real root once. We assert every discovered file resolves to a
+    # path *under* it — this is the real guard: `rglob` will happily recurse
+    # INTO a symlinked subdirectory (whose files aren't themselves symlinks), so
+    # skipping symlink entries alone isn't enough. Resolving the file and
+    # confining it to the real root blocks that escape (e.g. a `docs/x` symlink
+    # pointing at `~/.ssh`).
+    real_root = root.resolve()
     exts = supported_extensions()
-    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts)
+    out: list[Path] = []
+    for p in root.rglob("*"):
+        if p.is_symlink():
+            continue  # never index a symlink entry itself
+        if not p.is_file() or p.suffix.lower() not in exts:
+            continue
+        try:
+            resolved = p.resolve()
+        except OSError:
+            continue
+        if real_root != resolved and real_root not in resolved.parents:
+            continue  # escaped the chosen tree via a symlinked directory
+        try:
+            if resolved.stat().st_size > _MAX_FILE_BYTES:
+                continue  # skip oversized files rather than OOM the parser
+        except OSError:
+            continue
+        out.append(p)
+        if len(out) >= _MAX_FILES:
+            break
+    return sorted(out)
 
 
 async def index_folder(

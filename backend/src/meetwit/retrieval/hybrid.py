@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.ext.asyncio import AsyncSession as Session
 
 from meetwit.indexing import Embedder
-from meetwit.models import DocChunk, Document
+from meetwit.models import DocChunk, Document, TranscriptChunk
 
 
 @dataclass
@@ -32,6 +32,20 @@ class RetrievedChunk:
     score: float  # fused RRF score
     vector_rank: int | None
     bm25_rank: int | None
+
+
+@dataclass
+class RetrievedTranscriptChunk:
+    """A semantically-matched transcript segment for live meeting Q&A."""
+
+    chunk_id: int
+    meeting_id: str
+    transcript_id: int | None
+    text: str
+    audio_start: float
+    audio_end: float
+    speaker: str | None
+    score: float  # cosine distance (lower is better — vec0's native metric)
 
 
 # RRF formula constant — 60 is the de-facto standard.
@@ -161,6 +175,86 @@ class HybridRetriever:
                     score=rrf_scores[cid],
                     vector_rank=vector_ranks.get(cid),
                     bm25_rank=bm25_ranks.get(cid),
+                )
+            )
+        return out
+
+    async def search_transcript(
+        self,
+        meeting_id: str,
+        query: str,
+        top_k: int = 6,
+    ) -> list[RetrievedTranscriptChunk]:
+        """Vector search over THIS meeting's transcript chunks.
+
+        Pure vector (no BM25) — transcript chunks are short and a single
+        meeting's corpus is too small to benefit from keyword fusion. Falls
+        back to recency order if the meeting has no embedded chunks yet
+        (e.g. very fresh meeting, embedder still warming up).
+        """
+        query = query.strip()
+        if not query:
+            return []
+
+        embed_query = "Represent this sentence for searching relevant passages: " + query
+        q_vec = self.embedder.encode_one(embed_query)
+        q_bytes = struct.pack(f"<{len(q_vec)}f", *q_vec)
+
+        async with Session(self.engine) as session:
+            # vec0 requires the LIMIT to be a direct constraint on the
+            # virtual table MATCH — it can't be applied after a JOIN. So
+            # over-fetch from vec0 (k * 4) without the meeting filter, then
+            # filter to this meeting in Python. The corpus is small (one
+            # meeting's worth of segments), so this is cheap.
+            overfetch = max(top_k * 4, 32)
+            rows = await session.execute(
+                text(
+                    """
+                    SELECT chunk_id, distance
+                    FROM transcript_chunks_vec
+                    WHERE embedding MATCH :v
+                    ORDER BY distance
+                    LIMIT :k
+                    """
+                ),
+                {"v": q_bytes, "k": overfetch},
+            )
+            all_hits = [(int(r[0]), float(r[1])) for r in rows]
+            if not all_hits:
+                return []
+
+            # Restrict to chunks belonging to this meeting.
+            ids = [h[0] for h in all_hits]
+            chunk_rows = await session.execute(
+                select(TranscriptChunk).where(
+                    TranscriptChunk.id.in_(ids),
+                    TranscriptChunk.meeting_id == meeting_id,
+                )
+            )
+            chunks_by_id = {c.id: c for c in chunk_rows.scalars().all()}
+            if not chunks_by_id:
+                return []
+            # Re-restrict the ordered list to the meeting hits + keep ranking.
+            hits = [(cid, dist) for cid, dist in all_hits if cid in chunks_by_id][:top_k]
+            dist_by_id = dict(hits)
+            ids = [cid for cid, _ in hits]
+
+        out: list[RetrievedTranscriptChunk] = []
+        # Preserve vec0's distance ordering (best first).
+        for cid in ids:
+            c = chunks_by_id.get(cid)
+            if c is None:
+                continue
+            out.append(
+                RetrievedTranscriptChunk(
+                    chunk_id=cid,
+                    meeting_id=c.meeting_id,
+                    transcript_id=c.transcript_id,
+                    text=c.text,
+                    audio_start=c.audio_start,
+                    audio_end=c.audio_end,
+                    speaker=c.speaker,
+                    score=dist_by_id[cid],
                 )
             )
         return out

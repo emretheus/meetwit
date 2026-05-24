@@ -7,11 +7,18 @@ from collections.abc import AsyncIterator
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from meetwit.llm import ChatMessage, OllamaProvider
+from meetwit.llm import OllamaProvider
 from meetwit.llm.prompts import MEMORY_CHAT_SYSTEM, memory_chat_user_prompt
+from meetwit.llm.providers import (
+    LlmConfig,
+    LlmUnavailableError,
+    Provider,
+    msg,
+    stream_chat,
+)
 from meetwit.retrieval import HybridRetriever
 
 log = structlog.get_logger()
@@ -19,9 +26,12 @@ router = APIRouter(prefix="/memory", tags=["memory"])
 
 
 class AskRequest(BaseModel):
-    question: str
-    model: str = "qwen2.5:3b-instruct"
-    top_k: int = 8
+    question: str = Field(max_length=8_000)
+    model: str = Field(default="gemma3:1b", max_length=128)
+    top_k: int = Field(default=8, ge=0, le=50)
+    provider: Provider = "ollama"
+    api_key: str | None = None
+    base_url: str | None = None
 
 
 @router.post("/ask")
@@ -40,7 +50,13 @@ async def ask(req: AskRequest, request: Request) -> EventSourceResponse:
         request.app.state.retriever = retriever
 
     chunks = await retriever.search(req.question, top_k=req.top_k)
-    provider: OllamaProvider = request.app.state.llm
+    settings = request.app.state.settings
+    base_cfg = LlmConfig(
+        provider=req.provider,  # type: ignore[arg-type]
+        model=req.model,
+        api_key=req.api_key,
+        base_url=req.base_url,
+    )
 
     async def _stream() -> AsyncIterator[dict[str, str]]:
         # Emit sources first so the client can render the citation panel
@@ -65,11 +81,16 @@ async def ask(req: AskRequest, request: Request) -> EventSourceResponse:
         }
 
         messages = [
-            ChatMessage(role="system", content=MEMORY_CHAT_SYSTEM),
-            ChatMessage(role="user", content=memory_chat_user_prompt(req.question, chunks)),
+            msg("system", MEMORY_CHAT_SYSTEM),
+            msg("user", memory_chat_user_prompt(req.question, chunks)),
         ]
         try:
-            async for token in provider.stream_chat(messages, model=req.model):
+            llm_cfg = await base_cfg.resolve(ollama_url=settings.ollama_url)
+        except LlmUnavailableError as exc:
+            yield {"event": "error", "data": str(exc)}
+            return
+        try:
+            async for token in stream_chat(llm_cfg, messages):
                 yield {"event": "token", "data": token}
         except Exception as exc:
             yield {"event": "error", "data": str(exc)}
