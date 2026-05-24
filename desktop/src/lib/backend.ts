@@ -28,6 +28,17 @@ export interface Meeting {
   ended_at: string | null;
   status: string;
   transcript_count: number;
+  /** User-edited markdown (TipTap output). Independent from the AI-generated
+   *  structured summary at `/summaries/:id`. */
+  summary_md: string | null;
+  /** Absolute path to the recorded mixed-audio WAV, if saved. Enables retranscribe. */
+  audio_path: string | null;
+  /** Set when this note was started from a calendar event (ADR-0004). */
+  calendar_event_id: string | null;
+  /** ISO 639-1 code for the AI summary's output language (#413). Default 'en'. */
+  summary_language: string;
+  /** Containing folder id (#424), or null when at the root. */
+  folder_id: string | null;
 }
 
 export interface TranscriptOut {
@@ -43,7 +54,22 @@ export async function listMeetings(): Promise<Meeting[]> {
   return jsonFetch<Meeting[]>('/meetings');
 }
 
-export async function createMeeting(body: { title?: string; project?: string } = {}): Promise<Meeting> {
+export interface TranscriptHit {
+  meeting_id: string;
+  meeting_title: string | null;
+  transcript_id: number;
+  audio_start: number;
+  snippet: string;
+}
+
+export async function searchTranscripts(q: string, limit = 20): Promise<TranscriptHit[]> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  return jsonFetch<TranscriptHit[]>(`/meetings/search/transcripts?${params.toString()}`);
+}
+
+export async function createMeeting(
+  body: { title?: string; project?: string } = {},
+): Promise<Meeting> {
   return jsonFetch<Meeting>('/meetings', { method: 'POST', body: JSON.stringify(body) });
 }
 
@@ -69,6 +95,67 @@ export async function appendTranscripts(
     method: 'POST',
     body: JSON.stringify({ segments }),
   });
+}
+
+/** Replace ALL of a meeting's transcripts (used by retranscribe). */
+export async function replaceTranscripts(
+  meetingId: string,
+  segments: Array<{ text: string; audio_start: number; audio_end: number; speaker?: string }>,
+): Promise<void> {
+  await jsonFetch(`/meetings/${meetingId}/transcripts`, {
+    method: 'PUT',
+    body: JSON.stringify({ segments }),
+  });
+}
+
+// ─── Calendar (ADR-0004) ──────────────────────────────────────────────
+
+export interface CalendarAttendee {
+  name: string | null;
+  email: string | null;
+  organizer: boolean;
+}
+
+export interface CalendarAccountOut {
+  id: string;
+  provider: string;
+  email: string;
+  connected_at: string;
+  last_synced_at: string | null;
+}
+
+export interface CalendarEventOut {
+  id: string;
+  title: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  all_day: boolean;
+  attendees: CalendarAttendee[];
+  description: string | null;
+  conference_url: string | null;
+  conference_kind: 'zoom' | 'meet' | 'teams' | null;
+  meeting_id: string | null;
+}
+
+export async function listCalendarAccounts(): Promise<CalendarAccountOut[]> {
+  return jsonFetch<CalendarAccountOut[]>('/calendar/accounts');
+}
+
+/** Read cached events for a window. Defaults to today (server local-day) when omitted. */
+export async function listCalendarEvents(
+  fromISO?: string,
+  toISO?: string,
+): Promise<CalendarEventOut[]> {
+  const params = new URLSearchParams();
+  if (fromISO) params.set('from', fromISO);
+  if (toISO) params.set('to', toISO);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return jsonFetch<CalendarEventOut[]>(`/calendar/events${qs}`);
+}
+
+/** Create a meeting from a calendar event (pre-named) + back-link it. */
+export async function linkEventToMeeting(eventId: string): Promise<Meeting> {
+  return jsonFetch<Meeting>(`/calendar/events/${eventId}/link`, { method: 'POST' });
 }
 
 // ─── Knowledge ────────────────────────────────────────────────────────
@@ -156,16 +243,28 @@ export async function getSummary(meetingId: string): Promise<SummaryOut | null> 
   return jsonFetch<SummaryOut | null>(`/summaries/${meetingId}`);
 }
 
+export interface SummaryTemplate {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export async function listSummaryTemplates(): Promise<SummaryTemplate[]> {
+  return jsonFetch<SummaryTemplate[]>('/summary-templates');
+}
+
 export async function listDecisions(meetingId?: string): Promise<DecisionOut[]> {
   const qs = meetingId ? `?meeting_id=${meetingId}` : '';
   return jsonFetch<DecisionOut[]>(`/decisions${qs}`);
 }
 
-export async function listActionItems(filters: {
-  meeting_id?: string;
-  owner?: string;
-  status_filter?: string;
-} = {}): Promise<ActionItemOut[]> {
+export async function listActionItems(
+  filters: {
+    meeting_id?: string;
+    owner?: string;
+    status_filter?: string;
+  } = {},
+): Promise<ActionItemOut[]> {
   const params = new URLSearchParams();
   if (filters.meeting_id) params.set('meeting_id', filters.meeting_id);
   if (filters.owner) params.set('owner', filters.owner);
@@ -188,13 +287,64 @@ export async function listConflicts(meetingId: string): Promise<ConflictOut[]> {
   return jsonFetch<ConflictOut[]>(`/conflicts/${meetingId}`);
 }
 
+export interface LlmRequestConfig {
+  provider: string;
+  model: string;
+  api_key: string | null;
+  base_url: string | null;
+}
+
+/**
+ * Build the LLM request config from Settings, read at CALL TIME (not module
+ * load) so toggling Settings takes effect without a reload.
+ *
+ * For cloud providers the API key is read from `meetwit:apikey:<provider>`.
+ * Keys never persist server-side — they ride each request and the backend
+ * falls back to local Ollama if a cloud key is missing.
+ */
+export function llmRequestConfig(): LlmRequestConfig {
+  let provider = 'ollama';
+  let model = 'gemma3:1b';
+  try {
+    const raw = localStorage.getItem('meetwit:prefs');
+    if (raw) {
+      const parsed = JSON.parse(raw) as { summaryProvider?: string; summaryModel?: string };
+      provider = parsed.summaryProvider || 'ollama';
+      model = parsed.summaryModel || 'gemma3:1b';
+    }
+  } catch {
+    /* defaults */
+  }
+  let apiKey: string | null = null;
+  if (provider !== 'ollama') {
+    apiKey = localStorage.getItem(`meetwit:apikey:${provider}`);
+  }
+  return { provider, model, api_key: apiKey, base_url: null };
+}
+
 export async function triggerPostMeeting(
   meetingId: string,
-  model = 'qwen2.5:3b-instruct',
+  opts: {
+    model?: string;
+    template_id?: string;
+    custom_prompt?: string;
+    /** ISO 639-1 code for the summary's output language (#413). When set, the
+     *  backend persists it as the meeting's preference and reuses it on re-runs. */
+    language?: string;
+  } = {},
 ): Promise<{ process_id: string }> {
+  const cfg = llmRequestConfig();
   return jsonFetch<{ process_id: string }>(`/post-meeting/${meetingId}/process`, {
     method: 'POST',
-    body: JSON.stringify({ model }),
+    body: JSON.stringify({
+      model: opts.model ?? cfg.model,
+      provider: cfg.provider,
+      api_key: cfg.api_key,
+      base_url: cfg.base_url,
+      template_id: opts.template_id ?? null,
+      custom_prompt: opts.custom_prompt ?? null,
+      language: opts.language ?? null,
+    }),
   });
 }
 
@@ -205,7 +355,7 @@ export async function triggerConflictDetection(
   return jsonFetch<{ process_id: string }>(`/conflicts/${meetingId}/detect`, {
     method: 'POST',
     body: JSON.stringify({
-      model: body.model ?? 'qwen2.5:3b-instruct',
+      model: body.model ?? llmRequestConfig().model,
       confidence_threshold: body.confidence_threshold ?? 0.8,
     }),
   });
@@ -224,15 +374,38 @@ export async function llmStatus(): Promise<LlmStatus> {
 
 // ─── SSE streaming helpers ────────────────────────────────────────────
 
+/**
+ * One source returned by `/live/ask` or `/memory/ask`. Two flavors:
+ *
+ *  - `kind: 'transcript'` → a hit inside the current meeting's transcript.
+ *    Has `audio_start` / `audio_end` (seconds from meeting start) and
+ *    `speaker` (often null today, set once diarization lands).
+ *
+ *  - `kind: 'document'` → a hit inside an indexed company doc.
+ *    Has `document_path` / `page_number` / `section_title`.
+ *
+ * `kind` is unset for legacy `/memory/ask` responses; treat that as
+ * `'document'` so old code keeps working.
+ */
 export interface SourceCitation {
+  kind?: 'transcript' | 'document';
   label: string;
   chunk_id: number;
-  document_id: number;
-  document_path: string;
-  page_number: number | null;
-  section_title: string | null;
   text: string;
   score?: number;
+
+  // document fields
+  document_id?: number;
+  document_path?: string;
+  page_number?: number | null;
+  section_title?: string | null;
+
+  // transcript fields
+  meeting_id?: string;
+  transcript_id?: number | null;
+  audio_start?: number;
+  audio_end?: number;
+  speaker?: string | null;
 }
 
 export type SseHandlers = {
@@ -293,7 +466,17 @@ async function streamSse(path: string, body: object, h: SseHandlers): Promise<vo
       if (line.startsWith('event:')) {
         currentEvent = line.slice(6).trim();
       } else if (line.startsWith('data:')) {
-        currentData += line.slice(5).trimStart();
+        // SSE spec: strip AT MOST ONE leading space after `data:`. Beyond
+        // that, whitespace is part of the payload. Our previous trimStart()
+        // ate Ollama's leading-space tokens (e.g. " agreed", " to") which
+        // collapsed the answer into "Weagreedtofocus…".
+        //
+        // Also per spec: when an event has multiple `data:` lines (e.g. a
+        // token that contains a real newline), they're joined with `\n`.
+        let raw = line.slice(5);
+        if (raw.startsWith(' ')) raw = raw.slice(1);
+        if (currentData) currentData += '\n';
+        currentData += raw;
       }
     }
   }
@@ -303,7 +486,51 @@ export async function askMemory(
   body: { question: string; model?: string; top_k?: number },
   handlers: SseHandlers,
 ): Promise<void> {
-  return streamSse('/memory/ask', body, handlers);
+  const cfg = llmRequestConfig();
+  return streamSse(
+    '/memory/ask',
+    {
+      ...body,
+      model: body.model ?? cfg.model,
+      provider: cfg.provider,
+      api_key: cfg.api_key,
+      base_url: cfg.base_url,
+    },
+    handlers,
+  );
+}
+
+export interface LiveAskTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface Insight {
+  kind: 'contradiction' | 'risk' | 'commitment' | 'decision';
+  severity: 'low' | 'medium' | 'high';
+  headline: string;
+  detail: string;
+  evidence_quote: string;
+  evidence_timestamp_seconds: number;
+  conflicts_with: string | null;
+}
+
+export interface InsightScanResponse {
+  insights: Insight[];
+  scanned_through_seconds: number;
+}
+
+export async function scanInsights(
+  meetingId: string,
+  sinceAudioSeconds: number,
+): Promise<InsightScanResponse> {
+  return jsonFetch<InsightScanResponse>(`/meetings/${meetingId}/insights/scan`, {
+    method: 'POST',
+    body: JSON.stringify({
+      meeting_id: meetingId,
+      since_audio_seconds: sinceAudioSeconds,
+    }),
+  });
 }
 
 export async function liveAsk(
@@ -313,8 +540,21 @@ export async function liveAsk(
     model?: string;
     recent_seconds?: number;
     top_k_docs?: number;
+    /** Prior turns in this Ask session. The current `question` is NOT duplicated here. */
+    history?: LiveAskTurn[];
   },
   handlers: SseHandlers,
 ): Promise<void> {
-  return streamSse('/live/ask', body, handlers);
+  const cfg = llmRequestConfig();
+  return streamSse(
+    '/live/ask',
+    {
+      ...body,
+      model: body.model ?? cfg.model,
+      provider: cfg.provider,
+      api_key: cfg.api_key,
+      base_url: cfg.base_url,
+    },
+    handlers,
+  );
 }

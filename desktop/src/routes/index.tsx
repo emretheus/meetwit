@@ -1,97 +1,145 @@
 import { useEffect, useState } from 'react';
-import { createFileRoute, Link } from '@tanstack/react-router';
-import {
-  knowledgeStats,
-  listActionItems,
-  listMeetings,
-  type ActionItemOut,
-  type KnowledgeStats,
-  type Meeting,
-} from '@/lib/backend';
+import { createFileRoute } from '@tanstack/react-router';
+import { AlertCircle, Mic } from 'lucide-react';
+import { listMeetings, type Meeting } from '@/lib/backend';
+import { startMeeting } from '@/lib/meetingLifecycle';
+import { useBackendReady } from '@/lib/useBackendReady';
+import { useRunning } from '@/stores/meetingStore';
+import { Spinner } from '@/components/ui';
+import { Logo } from '@/components/Logo';
+import { LiveMeetingView } from '@/components/LiveMeetingView';
+import { TodayMeetings } from '@/components/TodayMeetings';
 
 export const Route = createFileRoute('/')({
   component: HomePage,
 });
 
 function HomePage() {
-  const [stats, setStats] = useState<KnowledgeStats | null>(null);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [openTasks, setOpenTasks] = useState<ActionItemOut[]>([]);
+  const [meetingsLoading, setMeetingsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const running = useRunning();
+  const { ready: backendReady, error: backendError } = useBackendReady();
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const [s, ms, ts] = await Promise.all([
-          knowledgeStats(),
-          listMeetings(),
-          listActionItems({ status_filter: 'open' }),
-        ]);
-        setStats(s);
-        setMeetings(ms);
-        setOpenTasks(ts);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    })();
-  }, []);
+    if (!backendReady) return;
+    setMeetingsLoading(true);
+    void listMeetings()
+      .then(setMeetings)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setMeetingsLoading(false));
+  }, [backendReady]);
+
+  const effectiveError = error ?? backendError;
+
+  // Home IS the recording surface (Meetily style): show the live view ONLY
+  // while a recording is actually in progress. Once stopped, Home returns to
+  // the welcome state — the finished note is opened from the sidebar / the
+  // "View Meeting" toast, not left lingering here as a live page.
+  if (running) {
+    return <LiveMeetingView />;
+  }
+
+  async function handleStart() {
+    if (starting) return;
+    setStarting(true);
+    try {
+      // Start recording IN PLACE — no navigation. `startMeeting` flips
+      // `running`, which re-renders Home into the LiveMeetingView above.
+      await startMeeting();
+    } catch {
+      /* error surfaces via the live view */
+    } finally {
+      setStarting(false);
+    }
+  }
 
   return (
-    <div className="px-8 py-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Welcome to Meetwit</h1>
-        <p className="mt-1 text-sm text-neutral-400">
-          Privacy-first AI meeting assistant.
-        </p>
-        <Link
-          to="/meeting/live"
-          className="mt-4 inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-500"
-        >
-          ● Start Live Meeting
-        </Link>
-      </header>
+    <div className="relative flex h-full flex-col overflow-hidden bg-white">
+      {/* Soft brand backdrop — a faint radial wash + subtle dot grid so the
+          hero doesn't float in a stark white void. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            'radial-gradient(120% 80% at 50% -10%, rgba(37,99,235,0.06) 0%, rgba(37,99,235,0) 55%)',
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 opacity-[0.5]"
+        style={{
+          backgroundImage: 'radial-gradient(rgba(15,23,42,0.05) 1px, transparent 1px)',
+          backgroundSize: '22px 22px',
+          maskImage: 'radial-gradient(80% 60% at 50% 40%, #000 0%, transparent 75%)',
+          WebkitMaskImage: 'radial-gradient(80% 60% at 50% 40%, #000 0%, transparent 75%)',
+        }}
+      />
 
-      <div className="mt-8 grid grid-cols-4 gap-3 text-sm">
-        <Stat label="Indexed docs" value={stats?.indexed_count ?? 0} />
-        <Stat label="Chunks" value={stats?.chunk_count ?? 0} />
-        <Stat label="Meetings" value={meetings.length} />
-        <Stat label="Open tasks" value={openTasks.length} />
+      <div className="relative flex flex-1 items-center justify-center px-10">
+        {meetingsLoading ? (
+          <div className="flex flex-col items-center gap-3 text-zinc-400">
+            <Spinner size={20} tone="text-zinc-400" />
+            <span className="text-[12px]">Loading…</span>
+          </div>
+        ) : (
+          <div className="flex w-full max-w-xl flex-col items-center text-center">
+            <div className="rounded-2xl shadow-[0_8px_30px_-8px_rgba(37,99,235,0.35)]">
+              <Logo size={56} className="rounded-2xl" />
+            </div>
+
+            <h1 className="mt-6 text-[28px] font-semibold tracking-tight text-zinc-900">
+              Welcome to Meetwit
+            </h1>
+            <p className="mt-2 max-w-md text-[14px] leading-relaxed text-zinc-500">
+              {meetings.length === 0
+                ? 'Record any meeting and get a live transcript, an AI summary, and answers grounded in your own notes — all on your Mac.'
+                : 'Pick a note from the sidebar, or start a new recording.'}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => void handleStart()}
+              disabled={starting}
+              className="mt-7 inline-flex items-center gap-2 rounded-full bg-brand-600 px-6 py-3 text-[14px] font-semibold text-white shadow-xs transition-colors hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/40 focus-visible:ring-offset-2 disabled:opacity-80"
+            >
+              {starting ? (
+                <>
+                  <Spinner size={15} />
+                  Starting…
+                </>
+              ) : (
+                <>
+                  <Mic className="h-4 w-4" strokeWidth={2.5} />
+                  Start Recording
+                </>
+              )}
+            </button>
+            <p className="mt-2.5 text-[11px] text-zinc-400">
+              or press{' '}
+              <kbd className="rounded border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 shadow-xs">
+                ⌘N
+              </kbd>
+            </p>
+
+            {/* Today's calendar (ADR-0004) — renders only when a calendar is
+                connected. One click links the event + records pre-named. */}
+            <div className="mt-8 flex w-full justify-center">
+              <TodayMeetings />
+            </div>
+          </div>
+        )}
       </div>
 
-      <section className="mt-8">
-        <h2 className="text-sm font-medium">Recent meetings</h2>
-        {meetings.length === 0 ? (
-          <p className="mt-2 text-sm text-neutral-500">No meetings yet.</p>
-        ) : (
-          <ul className="mt-3 space-y-1.5">
-            {meetings.slice(0, 5).map((m) => (
-              <li key={m.id}>
-                <Link
-                  to="/meeting/$id/summary"
-                  params={{ id: m.id }}
-                  className="flex items-center justify-between rounded border border-neutral-800 bg-neutral-900/50 px-3 py-2 text-sm hover:bg-neutral-900"
-                >
-                  <span className="font-medium">{m.title ?? 'Untitled meeting'}</span>
-                  <span className="text-xs text-neutral-500">
-                    {new Date(m.started_at).toLocaleString()} · {m.transcript_count} segments
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {error && <p className="mt-4 text-sm text-red-400">✗ {error}</p>}
+      {effectiveError && (
+        <div className="relative border-t border-red-200 bg-red-50 px-5 py-2 text-[12px] text-red-700">
+          <AlertCircle className="mr-2 inline h-3.5 w-3.5 align-middle" />
+          {effectiveError}
+        </div>
+      )}
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-3">
-      <div className="text-xs text-neutral-500">{label}</div>
-      <div className="mt-1 text-lg font-medium">{value}</div>
-    </div>
-  );
-}

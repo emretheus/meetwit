@@ -1,13 +1,18 @@
-//! System-audio capture via ScreenCaptureKit (Swift FFI).
+//! System-audio capture via the Core Audio process-tap API (Swift FFI).
 //!
-//! The Swift side (`swift/SystemAudioTap.swift`) hands us interleaved f32
-//! samples at the system's native sample rate (typically 48 kHz, 2 channels).
-//! We downmix to mono, resample to 16 kHz, and push into a `SampleRing`.
+//! The Swift side (`swift/SystemAudioTap.swift`) attaches a global mono tap to
+//! a private aggregate device on the default output device, and hands us f32
+//! samples at the tap's native sample rate (typically 48 kHz, mono). We
+//! downmix (no-op for mono), resample to 16 kHz, and push into a `SampleRing`.
+//! This follows the default output device (speakers / wired / Bluetooth /
+//! AirPods) and survives mid-meeting output switches.
 //!
-//! Permission: macOS prompts for "Screen Recording" the first time
-//! `meetwit_sck_start` is called. We don't need any *entitlement* — TCC
-//! handles it at runtime — but the Info.plist must include
-//! `NSScreenCaptureUsageDescription`.
+//! Permission: macOS prompts for "Audio Capture" the first time the tap is
+//! created. We don't need any *entitlement* — TCC handles it at runtime — but
+//! the Info.plist must include `NSAudioCaptureUsageDescription`.
+//!
+//! The C ABI symbols are still named `meetwit_sck_*` for historical reasons
+//! (they used to wrap ScreenCaptureKit); they now drive the Core Audio tap.
 //!
 //! FFI safety contract:
 //! - `meetwit_sck_*` calls are thread-safe (Swift side serializes via

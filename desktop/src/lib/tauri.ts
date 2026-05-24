@@ -49,8 +49,18 @@ export interface MicStatus {
   level: MicLevel;
 }
 
-export async function micStart(): Promise<MicStatus> {
-  return invoke<MicStatus>('mic_start');
+export interface AudioDevice {
+  id: string;
+  name: string;
+  is_default: boolean;
+}
+
+export async function audioInputDevices(): Promise<AudioDevice[]> {
+  return invoke<AudioDevice[]>('audio_input_devices');
+}
+
+export async function micStart(deviceId?: string | null): Promise<MicStatus> {
+  return invoke<MicStatus>('mic_start', deviceId ? { deviceId } : {});
 }
 
 export async function micStop(): Promise<void> {
@@ -81,8 +91,8 @@ export async function systemAudioAvailable(): Promise<boolean> {
   return invoke<boolean>('system_audio_available');
 }
 
-export async function systemAudioStart(): Promise<SystemAudioStatus> {
-  return invoke<SystemAudioStatus>('system_audio_start');
+export async function systemAudioStart(backend?: string): Promise<SystemAudioStatus> {
+  return invoke<SystemAudioStatus>('system_audio_start', backend ? { backend } : {});
 }
 
 export async function systemAudioStop(): Promise<void> {
@@ -127,6 +137,20 @@ export async function asrModels(): Promise<AsrModel[]> {
   return invoke<AsrModel[]>('asr_models');
 }
 
+export interface RetranscribeSegment {
+  text: string;
+  audio_start: number;
+  audio_end: number;
+}
+
+/** Re-decode a saved meeting WAV with a chosen Whisper model (offline, blocking). */
+export async function retranscribeFile(
+  audioPath: string,
+  model: string,
+): Promise<RetranscribeSegment[]> {
+  return invoke<RetranscribeSegment[]>('retranscribe_file', { audioPath, model });
+}
+
 // ─── Mixer ────────────────────────────────────────────────────────────
 
 export interface MixerStats {
@@ -138,14 +162,87 @@ export interface MixerStats {
   is_voice: boolean;
 }
 
-export async function mixerStart(): Promise<{ running: boolean; stats: MixerStats }> {
-  return invoke('mixer_start');
+export interface MixerStatus {
+  running: boolean;
+  stats: MixerStats;
+  recording_path: string | null;
 }
 
-export async function mixerStop(): Promise<void> {
-  return invoke('mixer_stop');
+export async function mixerStart(
+  opts: { meetingId?: string; saveAudio?: boolean } = {},
+): Promise<MixerStatus> {
+  return invoke('mixer_start', {
+    meetingId: opts.meetingId ?? null,
+    saveAudio: opts.saveAudio ?? true,
+  });
 }
 
-export async function mixerStatus(): Promise<{ running: boolean; stats: MixerStats }> {
+/** Stops the mixer and returns the finalized recording path (if any). */
+export async function mixerStop(): Promise<string | null> {
+  return invoke<string | null>('mixer_stop');
+}
+
+export async function mixerStatus(): Promise<MixerStatus> {
   return invoke('mixer_status');
+}
+
+// ─── Calendar (ADR-0004) ──────────────────────────────────────────────
+
+/** Whether calendar is configured in this build (OAuth client id present). */
+export async function calendarAvailable(): Promise<boolean> {
+  return invoke<boolean>('calendar_available');
+}
+
+/** Run the Google OAuth loopback consent flow. Returns the connected email. */
+export async function calendarConnectGoogle(): Promise<string> {
+  return invoke<string>('calendar_connect_google');
+}
+
+/** Force a sync of one account's events. Returns the count synced. */
+export async function calendarSync(accountId: string, email: string): Promise<number> {
+  return invoke<number>('calendar_sync', { accountId, email });
+}
+
+/** Disconnect: deletes the Keychain token + sidecar account (cascades events). */
+export async function calendarDisconnect(accountId: string, email: string): Promise<void> {
+  return invoke<void>('calendar_disconnect', { accountId, email });
+}
+
+/** Fires (payload = email) when an OAuth connect completes. */
+export async function onCalendarConnected(handler: (email: string) => void): Promise<UnlistenFn> {
+  return listen<string>('calendar-connected', (e) => handler(e.payload));
+}
+
+/** Fires (payload = email) when access is revoked and a reconnect is needed. */
+export async function onCalendarDisconnected(
+  handler: (email: string) => void,
+): Promise<UnlistenFn> {
+  return listen<string>('calendar-disconnected', (e) => handler(e.payload));
+}
+
+// ─── Auto-detect meetings (ADR-0005) ──────────────────────────────────────
+
+export interface MeetingDetected {
+  kind: 'calendar';
+  /** Calendar event id to link the recording to. */
+  eventId?: string;
+  /** Display name for the notification (event title). */
+  appName?: string;
+}
+
+/** Enable/disable meeting-start reminders (master switch). */
+export async function detectionSetEnabled(enabled: boolean): Promise<void> {
+  return invoke<void>('detection_set_enabled', { enabled });
+}
+
+/** Enable/disable calendar-time nudges (mirrors the Settings sub-toggle). */
+export async function detectionSetCalendarNudge(enabled: boolean): Promise<void> {
+  return invoke<void>('detection_set_calendar_nudge', { enabled });
+}
+
+/** Fires when a calendar meeting is starting — drives the record nudge. */
+export async function onMeetingDetected(
+  handler: (payload: MeetingDetected) => void,
+): Promise<UnlistenFn> {
+  return listen<MeetingDetected>('meeting-detected', (e) => handler(e.payload));
 }
