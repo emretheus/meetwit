@@ -37,6 +37,36 @@ class Base(DeclarativeBase):
     """Shared declarative base."""
 
 
+# ─── Folders (organization) ─────────────────────────────────────────────
+
+
+class Folder(Base):
+    """A nestable folder for organizing meetings (#424).
+
+    Self-referential tree via ``parent_id``. Deleting a folder cascades to its
+    child folders, but meetings inside use SET NULL (see Meeting.folder_id) so
+    a deleted folder never deletes the meetings it held — they fall back to the
+    root.
+    """
+
+    __tablename__ = "folders"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    parent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("folders.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    parent: Mapped[Folder | None] = relationship(
+        back_populates="children", remote_side=[id]
+    )
+    children: Mapped[list[Folder]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan"
+    )
+    meetings: Mapped[list[Meeting]] = relationship(back_populates="folder")
+
+
 # ─── Meetings + transcripts ─────────────────────────────────────────────
 
 
@@ -46,6 +76,11 @@ class Meeting(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     title: Mapped[str | None] = mapped_column(String(255))
     project: Mapped[str | None] = mapped_column(String(255), index=True)
+    # Optional containing folder (#424). Null = lives at the root. SET NULL on
+    # folder delete so meetings are never destroyed when a folder is removed.
+    folder_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("folders.id", ondelete="SET NULL"), index=True
+    )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     audio_path: Mapped[str | None] = mapped_column(Text)
@@ -82,6 +117,12 @@ class Meeting(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    notes: Mapped[list[Note]] = relationship(
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        order_by="Note.created_at",
+    )
+    folder: Mapped[Folder | None] = relationship(back_populates="meetings")
 
 
 class Transcript(Base):
@@ -123,6 +164,32 @@ class TranscriptChunk(Base):
     audio_end: Mapped[float] = mapped_column(Float)
     speaker: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Note(Base):
+    """A manual note the user jots during (or after) a meeting (#389).
+
+    Distinct from the AI summary and the editable ``summary_md``: these are
+    raw, time-stamped notes captured live in the meeting view. ``audio_offset``
+    optionally pins the note to a moment on the recording timeline so it can be
+    interleaved with the transcript on export.
+    """
+
+    __tablename__ = "notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    meeting_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
+    )
+    text: Mapped[str] = mapped_column(Text)
+    # Seconds from meeting start when the note was taken; null if added later.
+    audio_offset: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    meeting: Mapped[Meeting] = relationship(back_populates="notes")
 
 
 # ─── Knowledge base ─────────────────────────────────────────────────────
