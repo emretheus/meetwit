@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default_factory=_default_data_dir)
     ollama_url: str = "http://127.0.0.1:11434"
 
+    # Calendar integration (ADR-0004). Public OAuth "Desktop app" client id —
+    # NOT a secret (PKCE replaces the client secret for public clients). The
+    # Rust core reads the same env var directly to run the OAuth flow; this is
+    # mirrored here so the sidecar can report whether calendar is configured.
+    # Env: MEETWIT_GOOGLE_OAUTH_CLIENT_ID.
+    google_oauth_client_id: str | None = None
+
     @property
     def db_path(self) -> Path:
         return self.data_dir / "meetwit.sqlite"

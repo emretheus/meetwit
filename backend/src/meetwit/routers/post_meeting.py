@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as Session
 
+from meetwit.llm.providers import LlmConfig, LlmUnavailableError, Provider
 from meetwit.models import ActionItem, Conflict, Decision, Meeting, Summary
 from meetwit.services import processes
 from meetwit.services.conflicts import ConflictProgress, detect_conflicts
@@ -20,7 +22,22 @@ router = APIRouter(prefix="", tags=["post-meeting"])
 
 
 class ProcessRequest(BaseModel):
-    model: str = "qwen2.5:3b-instruct"
+    model: str = Field(default="gemma3:1b", max_length=128)
+    # BYOK: when provider != "ollama" and an api_key is present, the summary
+    # pipeline routes through the cloud provider. Keys are never persisted —
+    # they ride this request from the desktop app's macOS Keychain.
+    provider: Provider = "ollama"
+    api_key: str | None = None
+    base_url: str | None = None
+    # Optional template selector (Default / Standup / Sales / Interview / id).
+    template_id: str | None = Field(default=None, max_length=128)
+    # User-supplied custom system prompt — bounded so it can't be an unbounded
+    # prompt-injection / DoS payload.
+    custom_prompt: str | None = Field(default=None, max_length=8_000)
+    # ISO 639-1 code for the summary's output language (#413). When provided it
+    # is persisted as the meeting's preference and reused on future re-runs. When
+    # null, the meeting's stored ``summary_language`` (default "en") applies.
+    language: str | None = Field(default=None, max_length=8)
 
 
 class ProcessResponse(BaseModel):
@@ -75,22 +92,74 @@ async def trigger_process(
     engine = _engine(request)
     settings = request.app.state.settings
 
+    language = body.language
     async with Session(engine) as session:  # type: ignore[arg-type]
         m = await session.get(Meeting, meeting_id)
         if m is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found")
+        if language is not None:
+            # Persist the chosen language so a later re-run (or auto-summary)
+            # keeps using it without the caller having to repeat it.
+            normalized = language.strip().lower() or "en"
+            m.summary_language = normalized
+            language = normalized
+            await session.commit()
+        else:
+            language = m.summary_language
 
     pid = processes.register()
     progress = PostMeetingProgress()
     processes.set_state(pid, progress)
 
+    base_cfg = LlmConfig(
+        provider=body.provider,  # type: ignore[arg-type]
+        model=body.model,
+        api_key=body.api_key,
+        base_url=body.base_url,
+    )
+
     async def _runner() -> None:
-        await process_meeting(meeting_id, engine, settings, body.model, progress)  # type: ignore[arg-type]
+        # Resolve the model first — falls back to an installed one, or records
+        # a clear error (and finishes) if Ollama is down / has no models.
+        try:
+            llm_config = await base_cfg.resolve(ollama_url=settings.ollama_url)
+        except LlmUnavailableError as exc:
+            progress.error = str(exc)
+            progress.stage = "failed"
+            progress.finished = True
+            processes.set_state(pid, progress)
+            return
+        await process_meeting(
+            meeting_id,
+            engine,  # type: ignore[arg-type]
+            settings,
+            llm_config.model,
+            progress,
+            llm_config=llm_config,
+            template_id=body.template_id,
+            custom_prompt=body.custom_prompt,
+            language=language,
+        )
         processes.set_state(pid, progress)
 
     task = asyncio.create_task(_runner())
     processes.set_task(pid, task)
     return ProcessResponse(process_id=pid)
+
+
+class TemplateOut(BaseModel):
+    id: str
+    name: str
+    description: str
+
+
+@router.get("/summary-templates", response_model=list[TemplateOut])
+def list_summary_templates() -> list[TemplateOut]:
+    from meetwit.services.templates import list_templates
+
+    return [
+        TemplateOut(id=t.id, name=t.name, description=t.description) for t in list_templates()
+    ]
 
 
 @router.get("/post-meeting/{meeting_id}/status")
@@ -168,9 +237,9 @@ async def list_action_items(
 
 
 class ActionItemPatch(BaseModel):
-    status: str | None = None
-    owner: str | None = None
-    deadline: str | None = None
+    status: Literal["open", "done"] | None = None
+    owner: str | None = Field(default=None, max_length=255)
+    deadline: str | None = Field(default=None, max_length=128)
 
 
 @router.patch("/action-items/{item_id}", response_model=ActionItemOut)
@@ -200,8 +269,8 @@ async def patch_action_item(item_id: int, body: ActionItemPatch, request: Reques
 
 
 class ConflictsProcessRequest(BaseModel):
-    model: str = "qwen2.5:3b-instruct"
-    confidence_threshold: float = 0.8
+    model: str = Field(default="gemma3:1b", max_length=128)
+    confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
 
 
 @router.post("/conflicts/{meeting_id}/detect", response_model=ProcessResponse)
