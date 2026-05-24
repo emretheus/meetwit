@@ -72,7 +72,18 @@ pub struct AsrStreamer {
 
 impl AsrStreamer {
     /// Start a streaming transcription loop.
-    pub fn start<F>(engine: Arc<WhisperEngine>, ring: SampleRing, on_event: F) -> Self
+    ///
+    /// `language` is the spoken-language hint (ISO 639-1, e.g. "en"/"de", or
+    /// "auto"). `extra_prompt` is the user's domain vocabulary (#474) — names,
+    /// jargon — primed into every segment. Both are owned so the worker thread
+    /// can hold them for its lifetime.
+    pub fn start<F>(
+        engine: Arc<WhisperEngine>,
+        ring: SampleRing,
+        language: String,
+        extra_prompt: Option<String>,
+        on_event: F,
+    ) -> Self
     where
         F: Fn(StreamerEvent) + Send + 'static,
     {
@@ -82,7 +93,7 @@ impl AsrStreamer {
         let thread = thread::Builder::new()
             .name("meetwit-asr".into())
             .spawn(move || {
-                if let Err(err) = run(engine, ring, on_event, stop_clone) {
+                if let Err(err) = run(engine, ring, language, extra_prompt, on_event, stop_clone) {
                     log::error!("asr streamer terminated: {err:#}");
                 }
             })
@@ -137,12 +148,15 @@ const MAX_SPEECH_SECS: f64 = 20.0;
 fn run<F>(
     engine: Arc<WhisperEngine>,
     ring: SampleRing,
+    language: String,
+    extra_prompt: Option<String>,
     on_event: F,
     stop: Arc<AtomicBool>,
 ) -> anyhow::Result<()>
 where
     F: Fn(StreamerEvent) + Send + 'static,
 {
+    let extra_prompt = extra_prompt.filter(|s| !s.trim().is_empty());
     let mut vad = VadSession::new(build_vad_config())
         .map_err(|e| anyhow::anyhow!("silero init failed: {e}"))?;
     log::info!("asr.streamer started — silero VAD initialised");
@@ -207,7 +221,14 @@ where
                         samples.len()
                     );
                     if let Some(emitted) = transcribe_and_emit(
-                        &engine, &samples, seg_start, seg_end, &on_event, &prev_text,
+                        &engine,
+                        &samples,
+                        seg_start,
+                        seg_end,
+                        &on_event,
+                        &prev_text,
+                        &language,
+                        extra_prompt.as_deref(),
                     ) {
                         prev_text = emitted;
                     }
@@ -232,7 +253,14 @@ where
             );
             if !buffered.is_empty() {
                 if let Some(emitted) = transcribe_and_emit(
-                    &engine, &buffered, start, end_origin, &on_event, &prev_text,
+                    &engine,
+                    &buffered,
+                    start,
+                    end_origin,
+                    &on_event,
+                    &prev_text,
+                    &language,
+                    extra_prompt.as_deref(),
                 ) {
                     prev_text = emitted;
                 }
@@ -264,6 +292,7 @@ where
 /// joined text so the caller can feed it back as priming context for the
 /// next segment. Returns `None` if nothing was emitted (decode failed,
 /// pure silence, all-filler output).
+#[allow(clippy::too_many_arguments)]
 fn transcribe_and_emit<F>(
     engine: &WhisperEngine,
     samples: &[f32],
@@ -271,18 +300,21 @@ fn transcribe_and_emit<F>(
     audio_end: f64,
     on_event: &F,
     prev_text: &str,
+    language: &str,
+    extra_prompt: Option<&str>,
 ) -> Option<String>
 where
     F: Fn(StreamerEvent) + Send + 'static,
 {
     let t0 = Instant::now();
     let opts = DecodeOptions {
-        extra_prompt: None,
+        extra_prompt,
         prev_text: if prev_text.is_empty() {
             None
         } else {
             Some(prev_text)
         },
+        language: Some(language),
     };
     let result = match engine.transcribe_with(samples, &opts) {
         Ok(segs) => segs,
