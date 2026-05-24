@@ -10,15 +10,17 @@
 
 #![allow(clippy::similar_names)] // mic_rms, sys_rms, mix_rms intentionally rhyme
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use hound::WavWriter;
 use parking_lot::Mutex;
 
 use super::ring::{SampleRing, rms};
-use super::wav::TARGET_SAMPLE_RATE;
+use super::wav::{TARGET_SAMPLE_RATE, open_writer, write_samples};
 
 /// 50 ms windows.
 pub const WINDOW_SAMPLES: usize = (TARGET_SAMPLE_RATE as usize) / 20;
@@ -47,33 +49,75 @@ pub struct MixerStats {
     pub is_voice: bool,
 }
 
+/// Shared recorder for the mixed stream. Wrapped in a Mutex so the worker
+/// thread writes while the main thread can finalize on stop.
+struct MixRecorder {
+    writer: Option<WavWriter<std::io::BufWriter<std::fs::File>>>,
+    path: PathBuf,
+}
+
 /// Owns the mixer worker thread.
 pub struct AudioMixer {
     out_ring: SampleRing,
     voice_ring: SampleRing,
     stats: Arc<Mutex<MixerStats>>,
     stop_flag: Arc<AtomicBool>,
+    recorder: Arc<Mutex<Option<MixRecorder>>>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl AudioMixer {
     /// Build a new mixer that reads from `mic` and (optionally) `system`,
     /// emitting into an output ring and a voice-only ring.
+    #[allow(dead_code)] // convenience wrapper; callers use start_recording_to
     pub fn start(mic: SampleRing, system: Option<SampleRing>) -> Self {
+        Self::start_recording_to(mic, system, None)
+    }
+
+    /// Like `start`, but if `record_path` is set the mixed mono stream is also
+    /// written to a 16 kHz WAV — the full meeting audio used for retranscribe.
+    pub fn start_recording_to(
+        mic: SampleRing,
+        system: Option<SampleRing>,
+        record_path: Option<PathBuf>,
+    ) -> Self {
         let out_ring = SampleRing::new(60 * TARGET_SAMPLE_RATE as usize);
         let voice_ring = SampleRing::new(60 * TARGET_SAMPLE_RATE as usize);
         let stats = Arc::new(Mutex::new(MixerStats::default()));
         let stop_flag = Arc::new(AtomicBool::new(false));
 
+        let recorder = Arc::new(Mutex::new(None));
+        if let Some(path) = record_path {
+            match open_writer(&path) {
+                Ok(writer) => {
+                    *recorder.lock() = Some(MixRecorder {
+                        writer: Some(writer),
+                        path,
+                    });
+                    log::info!("mixer.recording started");
+                }
+                Err(err) => log::warn!("mixer: could not open recording wav: {err}"),
+            }
+        }
+
         let out_clone = out_ring.clone();
         let voice_clone = voice_ring.clone();
         let stats_clone = stats.clone();
         let stop_clone = stop_flag.clone();
+        let rec_clone = recorder.clone();
 
         let thread = thread::Builder::new()
             .name("meetwit-mixer".into())
             .spawn(move || {
-                run_loop(mic, system, out_clone, voice_clone, stats_clone, stop_clone);
+                run_loop(
+                    mic,
+                    system,
+                    out_clone,
+                    voice_clone,
+                    stats_clone,
+                    stop_clone,
+                    rec_clone,
+                );
             })
             .expect("spawn mixer thread");
 
@@ -82,8 +126,14 @@ impl AudioMixer {
             voice_ring,
             stats,
             stop_flag,
+            recorder,
             thread: Some(thread),
         }
+    }
+
+    /// Path of the WAV being recorded, if any.
+    pub fn recording_path(&self) -> Option<PathBuf> {
+        self.recorder.lock().as_ref().map(|r| r.path.clone())
     }
 
     #[allow(dead_code)]
@@ -107,6 +157,15 @@ impl Drop for AudioMixer {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+        // Finalize the recording WAV (after the worker has stopped writing).
+        if let Some(mut rec) = self.recorder.lock().take()
+            && let Some(writer) = rec.writer.take()
+        {
+            match writer.finalize() {
+                Ok(()) => log::info!("mixer.recording finalized path={}", rec.path.display()),
+                Err(err) => log::warn!("mixer: finalize wav failed: {err}"),
+            }
+        }
     }
 }
 
@@ -118,6 +177,7 @@ fn run_loop(
     voice_out: SampleRing,
     stats: Arc<Mutex<MixerStats>>,
     stop: Arc<AtomicBool>,
+    recorder: Arc<Mutex<Option<MixRecorder>>>,
 ) {
     let mut mic_pending: Vec<f32> = Vec::with_capacity(WINDOW_SAMPLES * 2);
     let mut sys_pending: Vec<f32> = Vec::with_capacity(WINDOW_SAMPLES * 2);
@@ -201,6 +261,17 @@ fn run_loop(
                 voice_out.push(&mixed);
                 voice_windows += 1;
             }
+
+            // Persist the full mixed stream to disk for retranscribe. We write
+            // every window (not just voice) so playback + re-decode see the
+            // complete timeline.
+            if let Some(rec) = recorder.lock().as_mut()
+                && let Some(writer) = rec.writer.as_mut()
+                && let Err(err) = write_samples(writer, &mixed)
+            {
+                log::warn!("mixer: wav write failed: {err}");
+            }
+
             windows_processed += 1;
 
             *stats.lock() = MixerStats {

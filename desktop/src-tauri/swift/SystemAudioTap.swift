@@ -1,24 +1,26 @@
 // SystemAudioTap.swift
-// ScreenCaptureKit bridge — captures system audio into a Rust-supplied callback.
+// System-audio capture via the macOS 14.4+ Core Audio PROCESS TAP API.
 //
-// C ABI surface (all functions are non-throwing C-style):
-//   meetwit_sck_available() -> Bool
+// Captures everything playing through the default output device (the OTHER
+// meeting participants' voices) by attaching a global mono tap to a private
+// aggregate device. This is far more reliable than ScreenCaptureKit's audio
+// path — it follows the default-output device (speakers / wired / Bluetooth /
+// AirPods) and isn't tied to Screen Recording permission. Permission here is
+// "Audio Capture" (NSAudioCaptureUsageDescription / kTCCServiceAudioCapture),
+// prompted automatically on tap creation.
+//
+// C ABI surface (unchanged from the old SCKit bridge, so the Rust side in
+// `src/audio/system.rs` needs no changes):
+//   meetwit_sck_available() -> Bool       (true on macOS 14.4+)
 //   meetwit_sck_start(callback, user_data) -> i32  (0 = ok, >0 = error code)
 //   meetwit_sck_stop() -> i32
 //
-// The callback receives little-endian interleaved f32 audio at the system's
-// native sample rate. Rust resamples to 16 kHz mono downstream.
-//
-// macOS 13+ required. Permission is granted via "Screen Recording" in
-// System Settings → Privacy & Security; SCK prompts on first use.
+// The callback receives little-endian interleaved f32 audio at the tap's
+// native sample rate (typically 48 kHz). Rust resamples to 16 kHz mono.
 
 import Foundation
-
-#if canImport(ScreenCaptureKit)
-import ScreenCaptureKit
-import AVFoundation
-import CoreMedia
-#endif
+import CoreAudio
+import AudioToolbox
 
 public typealias AudioCallback = @convention(c) (
     UnsafeMutableRawPointer?,  // user_data
@@ -28,113 +30,263 @@ public typealias AudioCallback = @convention(c) (
     Double                     // sample_rate
 ) -> Void
 
-@available(macOS 13.0, *)
-@MainActor
-final class SystemAudioTap: NSObject, SCStreamOutput, SCStreamDelegate {
+@available(macOS 14.4, *)
+final class SystemAudioTap: NSObject {
     static let shared = SystemAudioTap()
 
-    private var stream: SCStream?
-    private var callback: AudioCallback?
-    private var userData: UnsafeMutableRawPointer?
+    private let queue = DispatchQueue(label: "com.meetwit.systemtap", qos: .userInitiated)
 
-    func start(callback: @escaping AudioCallback, userData: UnsafeMutableRawPointer?) async throws {
-        guard stream == nil else { return }
+    // Core Audio handles for the active capture. Guarded by `queue`.
+    private var tapID = AudioObjectID(kAudioObjectUnknown)
+    private var aggregateID = AudioObjectID(kAudioObjectUnknown)
+    private var ioProcID: AudioDeviceIOProcID?
+    private var tapUUID: UUID?
+
+    // C callback target. Read on the audio IO thread — set before start, kept
+    // alive for the capture's lifetime.
+    nonisolated(unsafe) private var callback: AudioCallback?
+    nonisolated(unsafe) private var userData: UnsafeMutableRawPointer?
+    nonisolated(unsafe) private var audioCallbackCount = 0
+
+    // Listener that rebinds capture when the default output device changes
+    // (e.g. the user plugs in headphones mid-meeting).
+    private var outputListenerBlock: AudioObjectPropertyListenerBlock?
+    private var active = false
+    private var restarting = false
+
+    // MARK: - Public start/stop
+
+    func start(callback: @escaping AudioCallback, userData: UnsafeMutableRawPointer?) -> Int32 {
         self.callback = callback
         self.userData = userData
-
-        // Use shareable display 0 as the content source. SCK requires *some*
-        // video content even though we only want audio — config below pins
-        // it to the minimum.
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            false,
-            onScreenWindowsOnly: true
-        )
-        guard let display = content.displays.first else {
-            throw NSError(
-                domain: "MeetwitSCK", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "no displays available"]
-            )
-        }
-        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-
-        let config = SCStreamConfiguration()
-        config.capturesAudio = true
-        // Audio-only — minimal video (SCK won't let you fully disable it).
-        config.width = 2
-        config.height = 2
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 1) // 1 FPS
-        config.queueDepth = 6
-        config.excludesCurrentProcessAudio = true
-        config.sampleRate = 48000
-        config.channelCount = 2
-
-        let s = SCStream(filter: filter, configuration: config, delegate: self)
-        try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
-        // Also need to add a (no-op) video output — SCK refuses to start otherwise.
-        try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global(qos: .background))
-        try await s.startCapture()
-        self.stream = s
+        self.active = true
+        installDefaultOutputListener()
+        return startCapture()
     }
 
-    func stop() async {
-        guard let s = stream else { return }
-        do { try await s.stopCapture() } catch { /* ignored */ }
-        stream = nil
+    func stop() {
+        active = false
+        removeDefaultOutputListener()
+        teardownCapture()
         callback = nil
         userData = nil
     }
 
-    // MARK: - SCStreamOutput
+    // MARK: - Capture lifecycle
 
-    nonisolated func stream(
-        _ stream: SCStream,
-        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
-        of outputType: SCStreamOutputType
-    ) {
-        guard outputType == .audio,
-              sampleBuffer.isValid,
-              let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee
-        else { return }
+    /// Build the tap + aggregate device against the CURRENT default output
+    /// device and start the IO proc. Returns 0 on success, >0 error code.
+    private func startCapture() -> Int32 {
+        guard tapID == kAudioObjectUnknown else { return 0 } // already running
 
-        // Coerce to interleaved f32 if needed. For SCK's default, samples
-        // arrive as f32 already.
-        var blockBuffer: CMBlockBuffer?
-        var audioBufferList = AudioBufferList(
-            mNumberBuffers: 1,
-            mBuffers: AudioBuffer(mNumberChannels: 0, mDataByteSize: 0, mData: nil)
-        )
-        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-            sampleBuffer,
-            bufferListSizeNeededOut: nil,
-            bufferListOut: &audioBufferList,
-            bufferListSize: MemoryLayout<AudioBufferList>.size,
-            blockBufferAllocator: nil,
-            blockBufferMemoryAllocator: nil,
-            flags: 0,
-            blockBufferOut: &blockBuffer
-        )
-        guard status == noErr,
-              let dataPtr = audioBufferList.mBuffers.mData
-        else { return }
+        // 1) Global mono tap (all system output, mixed to mono). Unmuted so the
+        //    user still hears the meeting. Private so it isn't published.
+        let desc = CATapDescription(monoGlobalTapButExcludeProcesses: [])
+        let uuid = UUID()
+        desc.uuid = uuid
+        desc.name = "MeetwitSystemTap"
+        desc.muteBehavior = .unmuted
+        desc.isPrivate = true
 
-        let byteSize = Int(audioBufferList.mBuffers.mDataByteSize)
-        let channels = Int(audioBufferList.mBuffers.mNumberChannels)
-        let sampleCount = byteSize / MemoryLayout<Float>.size
-        let floats = dataPtr.bindMemory(to: Float.self, capacity: sampleCount)
-
-        // Snapshot callback + user_data on main actor without blocking the
-        // sample queue: capture pointers, then call out-of-actor.
-        Task { @MainActor in
-            guard let cb = self.callback else { return }
-            cb(self.userData, floats, Int32(sampleCount), Int32(channels), asbd.mSampleRate)
+        var newTap = AudioObjectID(kAudioObjectUnknown)
+        var err = AudioHardwareCreateProcessTap(desc, &newTap)
+        guard err == noErr, newTap != kAudioObjectUnknown else {
+            NSLog("[Meetwit Tap] AudioHardwareCreateProcessTap failed: \(err)")
+            return 2
         }
+
+        // 2) Default output device UID — the aggregate's clock reference.
+        guard let outputUID = defaultOutputDeviceUID() else {
+            NSLog("[Meetwit Tap] no default output device UID")
+            _ = AudioHardwareDestroyProcessTap(newTap)
+            return 2
+        }
+
+        // 3) Private aggregate device wrapping ONLY the tap. We keep
+        //    MainSubDevice (clock reference) but omit SubDeviceList — including
+        //    the output as a real sub-device on a GLOBAL tap doubles/echoes
+        //    the audio.
+        let aggUID = UUID().uuidString
+        let aggDict: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "MeetwitTapAggregate",
+            kAudioAggregateDeviceUIDKey: aggUID,
+            kAudioAggregateDeviceMainSubDeviceKey: outputUID,
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceIsStackedKey: false,
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceTapListKey: [
+                [
+                    kAudioSubTapDriftCompensationKey: true,
+                    kAudioSubTapUIDKey: uuid.uuidString,
+                ]
+            ],
+        ]
+        var newAgg = AudioObjectID(kAudioObjectUnknown)
+        err = AudioHardwareCreateAggregateDevice(aggDict as CFDictionary, &newAgg)
+        guard err == noErr, newAgg != kAudioObjectUnknown else {
+            NSLog("[Meetwit Tap] AudioHardwareCreateAggregateDevice failed: \(err)")
+            _ = AudioHardwareDestroyProcessTap(newTap)
+            return 2
+        }
+
+        // 4) The tap's native format (sample rate + channel count).
+        let asbd = tapFormat(newTap)
+        let sampleRate = asbd?.mSampleRate ?? 48000
+        let channels = Int(asbd?.mChannelsPerFrame ?? 1)
+
+        // 5) IO proc — copies captured f32 into the Rust callback synchronously
+        //    on the audio thread (the buffer is only valid for the block).
+        var newProc: AudioDeviceIOProcID?
+        err = AudioDeviceCreateIOProcIDWithBlock(&newProc, newAgg, queue) {
+            [weak self] _, inInputData, _, _, _ in
+            self?.handleIO(inInputData, sampleRate: sampleRate, channels: channels)
+        }
+        guard err == noErr, let proc = newProc else {
+            NSLog("[Meetwit Tap] AudioDeviceCreateIOProcIDWithBlock failed: \(err)")
+            _ = AudioHardwareDestroyAggregateDevice(newAgg)
+            _ = AudioHardwareDestroyProcessTap(newTap)
+            return 2
+        }
+
+        err = AudioDeviceStart(newAgg, proc)
+        guard err == noErr else {
+            NSLog("[Meetwit Tap] AudioDeviceStart failed: \(err)")
+            _ = AudioDeviceDestroyIOProcID(newAgg, proc)
+            _ = AudioHardwareDestroyAggregateDevice(newAgg)
+            _ = AudioHardwareDestroyProcessTap(newTap)
+            return 2
+        }
+
+        self.tapID = newTap
+        self.aggregateID = newAgg
+        self.ioProcID = proc
+        self.tapUUID = uuid
+        self.audioCallbackCount = 0
+        NSLog("[Meetwit Tap] capture started: sampleRate=\(sampleRate) channels=\(channels)")
+        return 0
     }
 
-    // MARK: - SCStreamDelegate
+    private func teardownCapture() {
+        if aggregateID != kAudioObjectUnknown, let proc = ioProcID {
+            _ = AudioDeviceStop(aggregateID, proc)
+            _ = AudioDeviceDestroyIOProcID(aggregateID, proc)
+        }
+        if aggregateID != kAudioObjectUnknown {
+            _ = AudioHardwareDestroyAggregateDevice(aggregateID)
+        }
+        if tapID != kAudioObjectUnknown {
+            _ = AudioHardwareDestroyProcessTap(tapID)
+        }
+        ioProcID = nil
+        aggregateID = kAudioObjectUnknown
+        tapID = kAudioObjectUnknown
+        tapUUID = nil
+    }
 
-    nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
-        // Best-effort: forward as zero-length call so Rust can notice and stop.
+    // MARK: - IO callback
+
+    private func handleIO(
+        _ inInputData: UnsafePointer<AudioBufferList>,
+        sampleRate: Double,
+        channels: Int
+    ) {
+        let abl = UnsafeMutableAudioBufferListPointer(
+            UnsafeMutablePointer(mutating: inInputData)
+        )
+        guard let buf = abl.first, let mData = buf.mData else { return }
+        let frameCount = Int(buf.mDataByteSize) / MemoryLayout<Float>.size
+        if frameCount <= 0 { return }
+        let samples = mData.assumingMemoryBound(to: Float.self)
+        let ch = Int(buf.mNumberChannels) > 0 ? Int(buf.mNumberChannels) : channels
+
+        audioCallbackCount += 1
+        if audioCallbackCount <= 3 || audioCallbackCount % 500 == 0 {
+            var sumSq: Float = 0
+            for i in 0..<frameCount { sumSq += samples[i] * samples[i] }
+            let rms = (sumSq / Float(frameCount)).squareRoot()
+            NSLog("[Meetwit Tap] io cb #\(audioCallbackCount): frames=\(frameCount) ch=\(ch) sr=\(sampleRate) rms=\(rms)")
+        }
+
+        callback?(userData, samples, Int32(frameCount), Int32(ch), sampleRate)
+    }
+
+    // MARK: - Default-output device tracking
+
+    private func defaultOutputDeviceUID() -> CFString? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dev = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &dev
+        ) == noErr, dev != kAudioObjectUnknown else { return nil }
+
+        var uidAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var uid: CFString = "" as CFString
+        var us = UInt32(MemoryLayout<CFString>.size)
+        let err = withUnsafeMutablePointer(to: &uid) {
+            AudioObjectGetPropertyData(dev, &uidAddr, 0, nil, &us, $0)
+        }
+        return err == noErr ? uid : nil
+    }
+
+    private func tapFormat(_ tap: AudioObjectID) -> AudioStreamBasicDescription? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var asbd = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        guard AudioObjectGetPropertyData(tap, &addr, 0, nil, &size, &asbd) == noErr else {
+            return nil
+        }
+        return asbd
+    }
+
+    private func defaultOutputAddress() -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+    }
+
+    private func installDefaultOutputListener() {
+        guard outputListenerBlock == nil else { return }
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.queue.async { self?.handleDefaultOutputChanged() }
+        }
+        var addr = defaultOutputAddress()
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr, queue, block
+        )
+        if status == noErr { outputListenerBlock = block }
+    }
+
+    private func removeDefaultOutputListener() {
+        guard let block = outputListenerBlock else { return }
+        var addr = defaultOutputAddress()
+        _ = AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr, queue, block
+        )
+        outputListenerBlock = nil
+    }
+
+    private func handleDefaultOutputChanged() {
+        guard active, !restarting, tapID != kAudioObjectUnknown else { return }
+        restarting = true
+        NSLog("[Meetwit Tap] default output changed — rebinding capture")
+        teardownCapture()
+        if active { _ = startCapture() }
+        restarting = false
     }
 }
 
@@ -142,7 +294,7 @@ final class SystemAudioTap: NSObject, SCStreamOutput, SCStreamDelegate {
 
 @_cdecl("meetwit_sck_available")
 public func meetwit_sck_available() -> Bool {
-    if #available(macOS 13.0, *) { return true }
+    if #available(macOS 14.4, *) { return true }
     return false
 }
 
@@ -151,39 +303,13 @@ public func meetwit_sck_start(
     callback: AudioCallback,
     userData: UnsafeMutableRawPointer?
 ) -> Int32 {
-    guard #available(macOS 13.0, *) else { return 1 }
-    // Hop to the main actor to interact with SCStream APIs.
-    let sem = DispatchSemaphore(value: 0)
-    var resultCode: Int32 = 0
-    Task { @MainActor in
-        do {
-            try await SystemAudioTap.shared.start(callback: callback, userData: userData)
-        } catch {
-            resultCode = 2
-        }
-        sem.signal()
-    }
-    // If SCK is blocked on a TCC permission prompt (user hasn't granted
-    // Screen Recording yet) the start() call can hang for many seconds —
-    // sometimes indefinitely until the dialog is dismissed. We don't want
-    // to freeze the calling Rust thread, so wait at most 3 seconds and
-    // surface that as "timed out" to the caller.
-    let timeout: DispatchTime = .now() + .seconds(3)
-    if sem.wait(timeout: timeout) == .timedOut {
-        return 3  // 3 = timeout — caller should fall back to mic-only
-    }
-    return resultCode
+    guard #available(macOS 14.4, *) else { return 1 }
+    return SystemAudioTap.shared.start(callback: callback, userData: userData)
 }
 
 @_cdecl("meetwit_sck_stop")
 public func meetwit_sck_stop() -> Int32 {
-    guard #available(macOS 13.0, *) else { return 1 }
-    let sem = DispatchSemaphore(value: 0)
-    Task { @MainActor in
-        await SystemAudioTap.shared.stop()
-        sem.signal()
-    }
-    let timeout: DispatchTime = .now() + .seconds(2)
-    _ = sem.wait(timeout: timeout)
+    guard #available(macOS 14.4, *) else { return 1 }
+    SystemAudioTap.shared.stop()
     return 0
 }

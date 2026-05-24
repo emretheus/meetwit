@@ -12,7 +12,7 @@ pub mod system;
 pub mod wav;
 
 #[allow(unused_imports)]
-pub use mic::{MicCapture, MicLevel};
+pub use mic::{AudioDevice, MicCapture, MicLevel, list_input_devices};
 #[allow(unused_imports)]
 pub use mixer::{AudioMixer, MixerStats};
 #[allow(unused_imports)]

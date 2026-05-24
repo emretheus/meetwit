@@ -2,13 +2,14 @@
 
 mod asr;
 mod audio;
+mod calendar;
 mod commands;
 mod sidecar;
 mod state;
 
 use std::path::PathBuf;
 
-use tauri::{Emitter, Manager, RunEvent};
+use tauri::{Emitter, Listener, Manager, RunEvent};
 
 use crate::sidecar::{SidecarManager, SpawnOptions};
 use crate::state::AppState;
@@ -21,7 +22,7 @@ pub fn run() {
     let app_state = AppState::default();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(app_state)
         .setup(|app| {
             log::info!("Meetwit starting (version {})", app.package_info().version);
@@ -40,6 +41,16 @@ pub fn run() {
                         if let Err(err) = handle.emit("backend-ready", ()) {
                             log::warn!("failed to emit backend-ready event: {err}");
                         }
+
+                        // Calendar (ADR-0004): sync on launch, on connect, and
+                        // every 10 min while open. No-ops cheaply if no account
+                        // is connected. Spawned separately so the watchdog below
+                        // (which never returns) doesn't block it.
+                        spawn_calendar_sync(handle.clone());
+
+                        // Auto-detect (ADR-0005): poll for a frontmost
+                        // conferencing app every 5s and nudge to record.
+                        spawn_detection(handle.clone());
 
                         // Watchdog runs forever (until app shutdown).
                         SidecarManager::supervise(sidecar, opts).await;
@@ -63,6 +74,7 @@ pub fn run() {
             commands::mic_status,
             commands::mic_record_start,
             commands::mic_record_stop,
+            commands::audio_input_devices,
             commands::system_audio_available,
             commands::system_audio_start,
             commands::system_audio_stop,
@@ -74,8 +86,18 @@ pub fn run() {
             commands::asr_start,
             commands::asr_stop,
             commands::asr_status,
+            commands::retranscribe_file,
             commands::whisper_download,
+            commands::ollama_available,
+            commands::ollama_pull,
+            commands::save_export,
             commands::open_system_settings,
+            commands::calendar_available,
+            commands::calendar_connect_google,
+            commands::calendar_sync,
+            commands::calendar_disconnect,
+            commands::detection_set_enabled,
+            commands::detection_set_calendar_nudge,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -92,6 +114,44 @@ pub fn run() {
                 });
             }
         });
+}
+
+/// Drive calendar sync: an initial pass + a 10-minute timer, plus an immediate
+/// pass whenever the frontend reports a fresh connect via `calendar-connected`.
+fn spawn_calendar_sync(handle: tauri::AppHandle) {
+    // Re-sync immediately after a new account connects.
+    let on_connect = handle.clone();
+    handle.listen("calendar-connected", move |_| {
+        let h = on_connect.clone();
+        tauri::async_runtime::spawn(async move {
+            commands::calendar_sync_all(&h).await;
+        });
+    });
+
+    // Initial sync + periodic timer.
+    tauri::async_runtime::spawn(async move {
+        commands::calendar_sync_all(&handle).await;
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+        tick.tick().await; // first tick fires immediately — skip (we just synced)
+        loop {
+            tick.tick().await;
+            commands::calendar_sync_all(&handle).await;
+        }
+    });
+}
+
+/// Poll the local calendar cache every 20s and nudge the user to record when a
+/// meeting is starting (ADR-0005). Calendar-driven only — we dropped the
+/// app-frontmost heuristic (unreliable: couldn't see browser tabs, depended on
+/// guessing the foreground app). The nudge fires from real event start times.
+fn spawn_detection(handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(20));
+        loop {
+            tick.tick().await;
+            commands::calendar_nudge_tick(&handle).await;
+        }
+    });
 }
 
 /// Choose SpawnOptions based on whether the bundled PyInstaller binary
@@ -126,9 +186,7 @@ fn build_spawn_options() -> SpawnOptions {
                 .find(|a| a.join("backend").join("pyproject.toml").is_file())
                 .map(std::path::Path::to_path_buf)
         })
-        .unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        });
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     log::info!(
         "sidecar: using dev command (uv run python -m meetwit) in {}",
         workspace_root.display()

@@ -1,8 +1,9 @@
 //! Automatic speech recognition via whisper-rs.
 //!
-//! Pulls VAD-gated audio from the mixer's `voice_ring`, slides it through
-//! whisper.cpp in 25-30 second windows with 2-3 second overlap, and emits
-//! `transcript-update` Tauri events the frontend listens to.
+//! Streaming design (Meetily-style): a single rolling buffer is fed to
+//! whisper at ~750 ms tick intervals. Stable segments are emitted as
+//! `transcript-update` Tauri events; the working tail goes out as
+//! `transcript-partial`. See `streamer.rs` for details.
 //!
 //! Model files live at `~/Library/Application Support/Meetwit/models/`.
 //! The user picks `small.en` (default, M2+) or `tiny.en` (M1 fallback) in
@@ -12,10 +13,10 @@ pub mod engine;
 pub mod model;
 pub mod streamer;
 
-pub use engine::WhisperEngine;
+pub use engine::{DecodeOptions, WhisperEngine};
 #[allow(unused_imports)]
 pub use model::model_dir;
 pub use model::{ModelInfo, model_path};
 pub use streamer::AsrStreamer;
 #[allow(unused_imports)]
-pub use streamer::TranscriptSegment;
+pub use streamer::{PartialTranscript, StreamerEvent, TranscriptSegment};
