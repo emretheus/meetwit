@@ -32,6 +32,7 @@ import {
   type ConflictOut,
   type DecisionOut,
   type Meeting,
+  type NoteOut,
   type SummaryOut,
   type TranscriptOut,
 } from '@/lib/backend';
@@ -118,6 +119,7 @@ function SummaryPage() {
 function SummaryView({ id }: { id: string }) {
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [transcripts, setTranscripts] = useState<TranscriptOut[]>([]);
+  const [notes, setNotes] = useState<NoteOut[]>([]);
   const [summary, setSummary] = useState<SummaryOut | null>(null);
   const [decisions, setDecisions] = useState<DecisionOut[]>([]);
   const [actions, setActions] = useState<ActionItemOut[]>([]);
@@ -139,9 +141,10 @@ function SummaryView({ id }: { id: string }) {
 
   async function refresh() {
     try {
-      const { meeting, transcripts } = await getMeeting(id);
+      const { meeting, transcripts, notes } = await getMeeting(id);
       setMeeting(meeting);
       setTranscripts(transcripts);
+      setNotes(notes ?? []);
       const [s, d, a, c] = await Promise.all([
         getSummary(id),
         listDecisions(id),
@@ -275,6 +278,7 @@ function SummaryView({ id }: { id: string }) {
       decisions,
       actions,
       transcripts,
+      notes,
     };
     const labels: Record<typeof kind, string> = {
       md: 'Markdown',

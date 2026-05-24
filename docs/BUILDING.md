@@ -58,6 +58,33 @@ pnpm tauri:dev
 # Opens the Meetwit window with the Tailwind UI + Tauri IPC button.
 ```
 
+### Optional: Google Calendar (ADR-0004)
+
+Calendar integration is gated on a Google OAuth client id. Without it, the
+Settings → Calendar "Connect" button is disabled ("not configured in this
+build") — everything else still works.
+
+To enable it in dev:
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create (or
+   pick) a project and enable the **Google Calendar API**.
+2. Create an OAuth client credential of type **Desktop app**. This is a *public*
+   client — PKCE replaces the client secret, so the client id is **not** a
+   secret and is safe to set as an env var / ship in the build.
+3. On the OAuth consent screen, add the scope
+   `https://www.googleapis.com/auth/calendar.readonly` and add your Google
+   account as a test user.
+4. Export the client id before launching the app (the Rust core reads it
+   directly; the sidecar mirrors it via the same `MEETWIT_` env):
+
+   ```bash
+   export MEETWIT_GOOGLE_OAUTH_CLIENT_ID="<your-id>.apps.googleusercontent.com"
+   pnpm tauri:dev
+   ```
+
+The OAuth flow uses a 127.0.0.1 loopback redirect (no custom URL scheme). The
+refresh token is stored in the macOS Keychain (service `meetwit.calendar.google`).
+
 ## 4. Run all checks (mirror CI)
 
 ```bash

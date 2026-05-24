@@ -30,6 +30,16 @@ The following are opt-in and disabled by default:
 1. **Cloud LLM (BYOK)** — if you provide an API key for Anthropic/OpenAI/Groq in Settings → AI, queries go to that provider.
 2. **Model downloads** — Whisper models from HuggingFace. One-time, only when you click "Download" in Settings.
 3. **Auto-update** — disabled in V1. (Planned for V1.1 with signed update manifests.)
+4. **Calendar (read-only)** — if you connect a calendar in Settings → Calendar (see below).
+
+## Calendar
+
+Calendar integration is **opt-in, read-only, and metadata-only**. When you connect a calendar:
+
+- We request **only** the read-only scope (`calendar.readonly`). Meetwit never writes to your calendar, never creates events, never RSVPs, and never joins a meeting as a bot.
+- The **only** thing that leaves your Mac is the OAuth handshake and the calendar fetch, both directly between your Mac and Google (`accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`). **Your audio still never leaves the device** — calendar integration touches metadata only.
+- **OAuth tokens are stored in the macOS Keychain** (service `meetwit.calendar.google`), owned by the app's Rust core. Tokens are never written to SQLite, never to plaintext, and never sent to the Python sidecar — the sidecar only ever sees the resulting event data (titles, times, attendees), which is cached locally in `meetwit.sqlite`.
+- **Disconnect any time** in Settings → Calendar. Disconnecting deletes the Keychain token and purges the cached account + events from the local database.
 
 ## Data location
 
