@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, event, text
 
+from meetwit.indexing.embedder import EMBEDDING_DIM
 from meetwit.sqlite_vec_loader import load_into_connection
 
 
@@ -20,7 +21,7 @@ def _pack_f32(vec: list[float]) -> bytes:
     return struct.pack(f"<{len(vec)}f", *vec)
 
 
-def _random_vec(dim: int = 384, seed: int = 0) -> list[float]:
+def _random_vec(dim: int = EMBEDDING_DIM, seed: int = 0) -> list[float]:
     rng = random.Random(seed)
     return [rng.uniform(-1.0, 1.0) for _ in range(dim)]
 
