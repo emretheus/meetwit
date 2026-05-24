@@ -41,20 +41,26 @@ export const Route = createFileRoute('/settings')({
 
 type SubTab = 'general' | 'recordings' | 'transcription' | 'summary' | 'beta';
 
-const WHISPER_VARIANTS: Array<{
+interface WhisperVariant {
   model: string;
   label: string;
   size: string;
   speed: string;
   accuracy: string;
   tag?: string;
-}> = [
+  /** true = transcribes non-English audio; false = English-only `.en` model. */
+  multilingual: boolean;
+}
+
+const WHISPER_VARIANTS: WhisperVariant[] = [
+  // English-only — faster + more accurate on English audio.
   {
     model: 'tiny.en',
     label: 'Tiny',
     size: '74 MB',
     speed: 'Very Fast',
     accuracy: 'Basic',
+    multilingual: false,
   },
   {
     model: 'small.en',
@@ -62,6 +68,7 @@ const WHISPER_VARIANTS: Array<{
     size: '466 MB',
     speed: 'Fast',
     accuracy: 'Good',
+    multilingual: false,
   },
   {
     model: 'medium.en',
@@ -70,13 +77,41 @@ const WHISPER_VARIANTS: Array<{
     speed: 'Moderate',
     accuracy: 'High',
     tag: 'Balanced',
+    multilingual: false,
+  },
+  // Multilingual (#233/#427) — transcribe any language. Larger downloads.
+  {
+    model: 'tiny',
+    label: 'Tiny (Multilingual)',
+    size: '74 MB',
+    speed: 'Very Fast',
+    accuracy: 'Basic',
+    multilingual: true,
+  },
+  {
+    model: 'small',
+    label: 'Small (Multilingual)',
+    size: '466 MB',
+    speed: 'Fast',
+    accuracy: 'Good',
+    multilingual: true,
+  },
+  {
+    model: 'medium',
+    label: 'Medium (Multilingual)',
+    size: '1.5 GB',
+    speed: 'Moderate',
+    accuracy: 'High',
+    multilingual: true,
   },
   {
     model: 'large-v3',
-    label: 'Large V3',
+    label: 'Large V3 (Multilingual)',
     size: '3.0 GB',
     speed: 'Slow',
     accuracy: 'Best',
+    tag: 'Best quality',
+    multilingual: true,
   },
 ];
 
@@ -205,6 +240,8 @@ function SettingsPage() {
           activeModel={prefs.transcriptModel}
           onPick={(m) => setPrefs((p) => ({ ...p, transcriptModel: m }))}
           onDownload={(m) => void downloadWhisper(m)}
+          prefs={prefs}
+          onChange={setPrefs}
         />
       )}
       {tab === 'summary' && <SummaryTab prefs={prefs} onChange={setPrefs} llm={llm} />}
@@ -682,23 +719,66 @@ function TranscriptionTab({
   activeModel,
   onPick,
   onDownload,
+  prefs,
+  onChange,
 }: {
   asr: AsrModel[];
   activeModel: string;
   onPick: (m: string) => void;
   onDownload: (m: string) => void;
+  prefs: PrefState;
+  onChange: (p: PrefState) => void;
 }) {
-  const asrByModel = new Map(asr.map((a) => [a.model, a]));
+  // Normalize both sides so "tiny.en"/"TinyEn"/"tinyen" all match. The Rust
+  // `asr_models` returns `model` as the debug-cased enum ("tinyen", "largev3")
+  // and `label` as "tiny.en"/"large-v3"; key on a canonical form of both.
+  const norm = (s: string) => s.toLowerCase().replace(/[-_.]/g, '');
+  const asrByModel = new Map<string, AsrModel>();
+  for (const a of asr) {
+    asrByModel.set(norm(a.model), a);
+    asrByModel.set(norm(a.label), a);
+  }
+  const multilingualMode = prefs.transcriptionLanguage !== 'en';
+  // Show the model list that matches the chosen spoken language: English-only
+  // models for English, multilingual models otherwise. A `.en` model can't
+  // transcribe other languages, so hiding the mismatched set prevents the
+  // #1 multilingual support-ticket ("I picked German but got gibberish").
+  const visibleVariants = WHISPER_VARIANTS.filter((v) => v.multilingual === multilingualMode);
 
   return (
     <>
+      <Section
+        title="Spoken Language"
+        description="The language spoken in your meetings. Non-English requires a multilingual model (below)."
+      >
+        <Select
+          leftIcon={<Languages className="h-3.5 w-3.5" />}
+          value={prefs.transcriptionLanguage}
+          onChange={(e) => onChange({ ...prefs, transcriptionLanguage: e.target.value })}
+        >
+          <option value="en">English (fastest, bundled models)</option>
+          <option value="auto">Auto-detect</option>
+          {SUMMARY_LANGUAGES.filter((l) => l.code !== 'en').map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.name} — {l.native}
+            </option>
+          ))}
+        </Select>
+        {multilingualMode && (
+          <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11.5px] text-amber-800">
+            Download a multilingual model below to transcribe this language. English-only models
+            can&rsquo;t.
+          </p>
+        )}
+      </Section>
+
       <Section
         title="Transcription Model"
         description="Local Whisper variants. Larger models are more accurate but slower."
       >
         <ul className="space-y-2">
-          {WHISPER_VARIANTS.map((v) => {
-            const present = asrByModel.get(v.model)?.present ?? false;
+          {visibleVariants.map((v) => {
+            const present = asrByModel.get(norm(v.model))?.present ?? false;
             const active = activeModel === v.model;
             return (
               <li key={v.model}>

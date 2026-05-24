@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
-import { createFileRoute } from '@tanstack/react-router';
-import { AlertCircle, Mic } from 'lucide-react';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { AlertCircle, FileUp, Mic } from 'lucide-react';
 import { listMeetings, type Meeting } from '@/lib/backend';
-import { startMeeting } from '@/lib/meetingLifecycle';
+import { importAudioMeeting, startMeeting } from '@/lib/meetingLifecycle';
 import { useBackendReady } from '@/lib/useBackendReady';
 import { useRunning } from '@/stores/meetingStore';
 import { Spinner } from '@/components/ui';
 import { Logo } from '@/components/Logo';
 import { LiveMeetingView } from '@/components/LiveMeetingView';
 import { TodayMeetings } from '@/components/TodayMeetings';
+import { toast } from '@/components/ToastStack';
 
 export const Route = createFileRoute('/')({
   component: HomePage,
@@ -19,7 +20,9 @@ function HomePage() {
   const [meetingsLoading, setMeetingsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [importing, setImporting] = useState(false);
   const running = useRunning();
+  const navigate = useNavigate();
   const { ready: backendReady, error: backendError } = useBackendReady();
 
   useEffect(() => {
@@ -52,6 +55,26 @@ function HomePage() {
       /* error surfaces via the live view */
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function handleImport() {
+    if (importing) return;
+    setImporting(true);
+    try {
+      const id = await importAudioMeeting();
+      if (id) {
+        toast({ title: 'Audio imported', description: 'Opening the transcript…', tone: 'success' });
+        void navigate({ to: '/meeting/$id/summary', params: { id } });
+      }
+    } catch (err) {
+      toast({
+        title: 'Import failed',
+        description: err instanceof Error ? err.message : String(err),
+        tone: 'error',
+      });
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -103,7 +126,7 @@ function HomePage() {
               type="button"
               onClick={() => void handleStart()}
               disabled={starting}
-              className="mt-7 inline-flex items-center gap-2 rounded-full bg-brand-600 px-6 py-3 text-[14px] font-semibold text-white shadow-xs transition-colors hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/40 focus-visible:ring-offset-2 disabled:opacity-80"
+              className="bg-brand-600 shadow-xs hover:bg-brand-700 focus-visible:ring-brand-400/40 mt-7 inline-flex items-center gap-2 rounded-full px-6 py-3 text-[14px] font-semibold text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-80"
             >
               {starting ? (
                 <>
@@ -119,10 +142,29 @@ function HomePage() {
             </button>
             <p className="mt-2.5 text-[11px] text-zinc-400">
               or press{' '}
-              <kbd className="rounded border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 shadow-xs">
+              <kbd className="shadow-xs rounded border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-zinc-500">
                 ⌘N
               </kbd>
             </p>
+
+            <button
+              type="button"
+              onClick={() => void handleImport()}
+              disabled={importing}
+              className="focus-visible:ring-brand-400/40 mt-4 inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-4 py-2 text-[12.5px] font-medium text-zinc-600 transition-colors hover:border-zinc-300 hover:text-zinc-800 focus-visible:outline-none focus-visible:ring-2 disabled:opacity-70"
+            >
+              {importing ? (
+                <>
+                  <Spinner size={13} tone="text-zinc-400" />
+                  Importing…
+                </>
+              ) : (
+                <>
+                  <FileUp className="h-3.5 w-3.5" strokeWidth={2.25} />
+                  Import audio file
+                </>
+              )}
+            </button>
 
             {/* Today's calendar (ADR-0004) — renders only when a calendar is
                 connected. One click links the event + records pre-named. */}
@@ -142,4 +184,3 @@ function HomePage() {
     </div>
   );
 }
-

@@ -970,6 +970,32 @@ end run"#;
     Ok(Some(path))
 }
 
+/// Show a native "choose file" dialog for picking an audio file to import
+/// (#336). Returns the POSIX path, or None if cancelled. Same osascript
+/// approach as `save_export` — no extra dependency, no webview file access.
+#[tauri::command]
+pub fn pick_audio_file() -> Result<Option<String>, String> {
+    // `choose file of type {...}` limits the picker to WAV (the only format we
+    // can decode). Returns an HFS path, or errors (-128) on cancel.
+    let script = r#"on run
+    set f to choose file with prompt "Import audio file" of type {"wav", "com.microsoft.waveform-audio"}
+    return POSIX path of f
+end run"#;
+    let out = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| format!("open dialog failed: {e}"))?;
+    if !out.status.success() {
+        return Ok(None); // user cancelled
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if path.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(path))
+}
+
 /// Open a macOS System Settings pane (used for permission deep-links).
 #[tauri::command]
 pub fn open_system_settings(pane: String) -> Result<(), String> {
