@@ -19,9 +19,11 @@ from meetwit.llm.structured import (
     ActionItemList,
     DecisionList,
     MeetingSummary,
+    MeetingTitle,
     structured_completion,
 )
-from meetwit.models import ActionItem, Decision, Summary, Transcript
+from meetwit.models import ActionItem, Decision, Meeting, Summary, Transcript
+from meetwit.services.templates import language_instruction, resolve_summary_system
 
 log = structlog.get_logger()
 
@@ -42,6 +44,18 @@ ACTIONS_SYSTEM = """Extract every action item (task someone agreed to do).
 Output JSON: {"action_items": [{"task": "...", "owner": "..." or null, "deadline": "..." or null}]}.
 `owner` is whoever was named to do it (best guess; null if unclear).
 `deadline` is a free-form date string if mentioned; null otherwise.
+"""
+
+TITLE_SYSTEM = """Write a short, specific title for this meeting (3-7 words).
+Output JSON: {"title": "..."}.
+Rules:
+- No trailing period.
+- No quotes, no emoji, no markdown.
+- Use Title Case (capitalize main words).
+- Prefer concrete nouns from the transcript over generic words like
+  "Discussion", "Meeting", "Call", "Sync" unless that's truly all the
+  meeting was about.
+- If nothing concrete was discussed, output "Untitled meeting".
 """
 
 
@@ -67,6 +81,11 @@ async def process_meeting(
     settings: Settings,
     model: str,
     progress: PostMeetingProgress,
+    *,
+    llm_config: object | None = None,
+    template_id: str | None = None,
+    custom_prompt: str | None = None,
+    language: str | None = None,
 ) -> PostMeetingProgress:
     try:
         async with Session(engine) as session:
@@ -76,6 +95,11 @@ async def process_meeting(
                 .order_by(Transcript.audio_start.asc())
             )
             transcripts = list(rows.scalars().all())
+            # Fall back to the meeting's stored preference when the caller
+            # didn't pass an explicit language (e.g. auto-summary on stop).
+            if language is None:
+                meeting_pref = await session.get(Meeting, meeting_id)
+                language = meeting_pref.summary_language if meeting_pref else "en"
 
         if not transcripts:
             progress.error = "no transcripts to process"
@@ -85,15 +109,22 @@ async def process_meeting(
 
         transcript_text = _format_transcript(transcripts)
         base_url = settings.ollama_url
+        # One trailing instruction reused across decisions/actions/title so the
+        # entire summary comes out in the requested language (#413).
+        lang_suffix = language_instruction(language)
+        summary_system = resolve_summary_system(
+            template_id=template_id, custom_prompt=custom_prompt, language=language
+        )
 
         # 1. Summary
         progress.stage = "summary"
         summary_obj = await structured_completion(
             base_url=base_url,
             model=model,
-            system=SUMMARY_SYSTEM,
+            system=summary_system,
             user=f"MEETING TRANSCRIPT:\n{transcript_text}",
             schema_cls=MeetingSummary,
+            llm_config=llm_config,
         )
         async with Session(engine) as session:
             existing = await session.get(Summary, meeting_id)
@@ -121,9 +152,10 @@ async def process_meeting(
         decisions = await structured_completion(
             base_url=base_url,
             model=model,
-            system=DECISIONS_SYSTEM,
+            system=DECISIONS_SYSTEM + lang_suffix,
             user=f"MEETING TRANSCRIPT:\n{transcript_text}",
             schema_cls=DecisionList,
+            llm_config=llm_config,
         )
         async with Session(engine) as session:
             # Idempotency: wipe prior decisions for this meeting.
@@ -146,9 +178,10 @@ async def process_meeting(
         actions = await structured_completion(
             base_url=base_url,
             model=model,
-            system=ACTIONS_SYSTEM,
+            system=ACTIONS_SYSTEM + lang_suffix,
             user=f"MEETING TRANSCRIPT:\n{transcript_text}",
             schema_cls=ActionItemList,
+            llm_config=llm_config,
         )
         async with Session(engine) as session:
             await session.execute(delete(ActionItem).where(ActionItem.meeting_id == meeting_id))
@@ -166,6 +199,31 @@ async def process_meeting(
                     )
             await session.commit()
         progress.actions_done = True
+
+        # 4. Title — only if the user hasn't set one. We don't want the
+        # AI overwriting "Q4 Planning Sync" with "Discussion Of Q4 Plans".
+        progress.stage = "title"
+        try:
+            async with Session(engine) as session:
+                meeting_obj = await session.get(Meeting, meeting_id)
+                if meeting_obj is not None and not (meeting_obj.title or "").strip():
+                    title_obj = await structured_completion(
+                        base_url=base_url,
+                        model=model,
+                        system=TITLE_SYSTEM + lang_suffix,
+                        user=f"MEETING TRANSCRIPT:\n{transcript_text}",
+                        schema_cls=MeetingTitle,
+                        llm_config=llm_config,
+                    )
+                    candidate = (title_obj.title or "").strip().strip('"').strip("'")
+                    # Hard cap: keep it sane. DB column is 255 but a "title"
+                    # longer than ~64 chars is almost certainly the model
+                    # writing a sentence — truncate gracefully.
+                    if candidate and len(candidate) <= 96:
+                        meeting_obj.title = candidate
+                        await session.commit()
+        except Exception as exc:
+            log.warning("post_meeting.title_failed", err=str(exc), meeting_id=meeting_id)
 
         progress.stage = "done"
     except Exception as exc:
