@@ -62,6 +62,10 @@ pub struct DecodeOptions<'a> {
     /// Tail of the previously-transcribed segment. Helps with consistent
     /// proper-noun spelling and avoids word repetition across boundaries.
     pub prev_text: Option<&'a str>,
+    /// ISO 639-1 spoken-language hint (e.g. "en", "de"). `None` or "en" keeps
+    /// the English default; any other code requires a multilingual model and
+    /// transcribes in that language. "auto" lets whisper detect the language.
+    pub language: Option<&'a str>,
 }
 
 impl WhisperEngine {
@@ -128,6 +132,11 @@ impl WhisperEngine {
             }
         }
 
+        // Resolve the spoken language into a local that outlives `params`.
+        // whisper.cpp's `set_language` borrows the &str for the lifetime of
+        // FullParams, so it must not be a temporary.
+        let lang: &str = opts.language.unwrap_or("en");
+
         // BeamSearch beats Greedy on accuracy at ~2-3× the compute. Whisper's
         // own paper recommends beam_size=5 with patience=1.0 for offline
         // accuracy; we use patience=-1.0 (whisper.cpp's "match openai" mode).
@@ -137,7 +146,10 @@ impl WhisperEngine {
         });
         params.set_n_threads(num_threads());
         params.set_translate(false);
-        params.set_language(Some("en"));
+        // Spoken-language hint. Default to English (the bundled models are
+        // English-only). A caller that loaded a multilingual model can pass a
+        // different ISO 639-1 code, or "auto" to let whisper detect it.
+        params.set_language(Some(lang));
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);

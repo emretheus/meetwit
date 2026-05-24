@@ -87,6 +87,7 @@ pub fn run() {
             commands::asr_stop,
             commands::asr_status,
             commands::retranscribe_file,
+            commands::import_audio_file,
             commands::whisper_download,
             commands::ollama_available,
             commands::ollama_pull,
