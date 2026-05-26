@@ -1,0 +1,43 @@
+# lefthook — git hooks runner (https://github.com/evilmartians/lefthook)
+# Install:  brew install lefthook  &&  lefthook install
+# Skip a hook for one commit:  LEFTHOOK=0 git commit ...
+
+pre-commit:
+  parallel: true
+  commands:
+    rust-fmt:
+      glob: "*.rs"
+      run: cargo fmt --all -- --check {staged_files}
+      stage_fixed: false
+
+    rust-clippy:
+      glob: "*.rs"
+      run: cargo clippy --workspace --all-targets -- -D warnings
+
+    python-ruff-check:
+      root: "backend/"
+      glob: "*.py"
+      run: cd backend && uv run ruff check {staged_files}
+
+    python-ruff-format:
+      root: "backend/"
+      glob: "*.py"
+      run: cd backend && uv run ruff format --check {staged_files}
+
+    frontend-eslint:
+      root: "desktop/"
+      glob: "*.{ts,tsx,js,jsx}"
+      run: cd desktop && pnpm exec eslint {staged_files} --max-warnings=0
+
+    prettier:
+      root: "desktop/"
+      glob: "*.{ts,tsx,css,json,md}"
+      run: cd desktop && pnpm exec prettier --check {staged_files}
+
+pre-push:
+  commands:
+    typecheck:
+      run: pnpm -F meetwit-desktop typecheck
+
+    pytest:
+      run: cd backend && uv run pytest -q
