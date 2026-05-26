@@ -12,6 +12,7 @@ which is the cost of multilingual support.
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Sequence
 
@@ -33,6 +34,12 @@ class Embedder:
         self.model_name = model_name
         self._lock = threading.Lock()
         self._model: object | None = None
+        # Run embeddings on CPU by default. BGE-M3 is ~2.3 GB; on Apple's MPS
+        # backend it competes with Whisper for Metal memory and OOMs on smaller
+        # GPUs (and on the constrained CI runner). Embedding is a one-shot batch
+        # op where CPU is plenty fast. Override with MEETWIT_EMBED_DEVICE (e.g.
+        # "mps") if a user has the headroom.
+        self.device = os.environ.get("MEETWIT_EMBED_DEVICE", "cpu")
 
     def _ensure_loaded(self) -> object:
         with self._lock:
@@ -40,7 +47,7 @@ class Embedder:
                 # Imported lazily — torch + transformers init is ~2s.
                 from sentence_transformers import SentenceTransformer
 
-                self._model = SentenceTransformer(self.model_name)
+                self._model = SentenceTransformer(self.model_name, device=self.device)
             return self._model
 
     def encode(self, texts: Sequence[str]) -> NDArray[np.float32]:
