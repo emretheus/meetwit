@@ -5,7 +5,7 @@
 #   1. Sanity-check prereqs (Rust, Node/pnpm, uv, cmake, Ollama, Whisper model)
 #   2. Run full static check matrix (rust fmt + clippy + test; ruff + mypy + pytest; pnpm typecheck + lint + build)
 #   3. Boot sidecar in the background; wait for /health
-#   4. Index sample-docs/ via /knowledge/index-folder
+#   4. Index a docs folder via /knowledge/index-folder (set MEETWIT_SAMPLE_DOCS)
 #   5. Smoke-test /memory/ask with a known question
 #   6. Hand off to `pnpm tauri:dev` (the UI)
 #
@@ -131,11 +131,13 @@ echo "  Version: $VERSION"
 
 # ─── Step 4 — Index sample docs ─────────────────────────────────────────
 echo
-say "Step 4/6: Indexing sample-docs/ (BGE-small embeds ~120 MB on first run)"
+say "Step 4/6: Indexing a sample docs folder (BGE-M3 downloads ~2.3 GB on first run)"
 
-SAMPLES="$ROOT/sample-docs"
+# Point this at any local folder of PDF/DOCX/MD/TXT to exercise indexing.
+# Override with: MEETWIT_SAMPLE_DOCS=/path/to/folder ./scripts/test.sh
+SAMPLES="${MEETWIT_SAMPLE_DOCS:-$ROOT/sample-docs}"
 if [[ ! -d "$SAMPLES" ]]; then
-  warn "sample-docs/ missing — skipping indexing demo"
+  warn "no sample docs folder at $SAMPLES — skipping indexing demo (set MEETWIT_SAMPLE_DOCS)"
 else
   PID=$(curl -s -X POST http://127.0.0.1:5167/knowledge/index-folder \
     -H 'content-type: application/json' \

@@ -1,6 +1,6 @@
 # Meetwit Roadmap
 
-## V1.0 — shipped (when V1_ACCEPTANCE passes on M2)
+## V1.0 — feature-complete (pending hardware acceptance)
 
 Five product promises:
 1. Index local company docs (PDF, DOCX, MD, TXT)
@@ -27,7 +27,6 @@ macOS 13+ on Apple Silicon. MIT licensed. Open source.
 
 ## V2 — beyond MVP (6-12 months out)
 
-- **Multilingual support** — non-English Whisper models, multilingual embedding model (BGE-M3)
 - **Vision-LLM PDF parsing** (Nemotron-Parse / VLM) for tables and figures
 - **Calendar integration** — auto-tag meetings to calendar events, auto-name from event title
 - **Slack / Notion / Drive connectors** — opt-in, signed-off-on per source. Same privacy stance: data stays local after sync.
@@ -37,7 +36,7 @@ macOS 13+ on Apple Silicon. MIT licensed. Open source.
 ## V3 — platform expansion
 
 - Windows / Linux desktop apps
-- App Store distribution (requires sandbox migration — see SIGNING + entitlements work)
+- App Store distribution (requires sandbox migration + entitlements work)
 - Mobile companion app (read-only viewer of summaries + tasks)
 
 ## Will not ship

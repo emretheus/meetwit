@@ -1,48 +1,74 @@
 # Meetwit
 
-> Privacy-first, local-first AI meeting assistant for macOS that brings your company's wit to every meeting.
+> Privacy-first, local-first AI meeting assistant for macOS.
 
-Meetwit listens to your live meetings, indexes your local company documents, and answers questions in real time using both — with sources. It detects conflicts between what's being discussed and what your company has already decided.
+Meetwit listens to your live meetings, indexes your local company documents, and
+answers questions in real time using both — with sources. It detects conflicts
+between what's being discussed and what your company has already decided.
 
-**Everything runs locally on your Mac. Nothing leaves.**
+**Everything runs locally on your Mac. Nothing leaves.** No accounts, no
+telemetry, no cloud — the app talks only to `localhost`.
 
 ---
 
-## Status
+## What makes it different
 
-🟡 **Pre-alpha — V1 feature-complete, awaiting hardware acceptance.** All 16 weeks of the V1 plan have shipped. See [docs/V1_ACCEPTANCE.md](./docs/V1_ACCEPTANCE.md) for the test plan that gates the `v1.0.0` tag, and [docs/weekly/](./docs/weekly/) for week-by-week status. Roadmap in [ROADMAP.md](./ROADMAP.md), changelog in [CHANGELOG.md](./CHANGELOG.md).
-
-| Layer | Stack |
-|---|---|
-| Desktop shell | Tauri 2 + Rust + React 19 + TypeScript + Tailwind 4 |
-| ASR | whisper-rs (Metal + CoreML) |
-| Audio | ScreenCaptureKit (system) + cpal (mic) |
-| Backend | FastAPI + SQLite + sqlite-vec (auto-spawned sidecar) |
-| Embeddings | BGE-small-en-v1.5 (bundled) |
-| LLM | Ollama (user-installed) |
-
-## What's different about Meetwit
-
-Most meeting assistants (Otter, Granola, Fireflies) transcribe what was said. Meetwit also understands what your **company** has already decided — so it can:
+Most meeting assistants transcribe what was *said*. Meetwit also understands what
+your **company** has already *decided*, so it can:
 
 1. **Index** local company documents (PDF, DOCX, Markdown, TXT)
 2. **Listen** to live meetings (mic + system audio) and produce a real-time transcript
-3. **Answer** questions during meetings using docs + meeting history, with sources
-4. **Detect** conflicts between meeting content and company knowledge
-5. **Save** summaries, decisions, and action items for cross-meeting queries
+3. **Answer** questions during the meeting using your docs + meeting history, with sources
+4. **Detect** conflicts between meeting content and your company knowledge
+5. **Save** summaries, decisions, and action items for cross-meeting search
+
+## Features
+
+- **Live transcription** — mic + system audio, on-device Whisper (Metal GPU)
+- **Multilingual** — transcribe in any language; write summaries in any language, independent of the spoken one
+- **In-meeting copilot** — ask questions during the call, grounded in your docs + transcript, with citations
+- **Live notes** — jot timestamped notes while recording
+- **Summaries, decisions & action items** — generated locally after the meeting
+- **Cross-meeting memory** — semantic search across every meeting and document
+- **Conflict detection** — flags when a new decision contradicts a past one
+- **Organize** — nest meetings in folders, merge interrupted sessions
+- **Import audio** — transcribe an existing recording
+- **Export** — Markdown, PDF, plain text, WebVTT, SRT, JSON
+- **Bring your own model** — local Ollama by default; optional OpenAI / Anthropic / Groq / OpenRouter (keys stay in the macOS Keychain)
+
+## Privacy
+
+By default, **zero outbound network requests**. The app talks only to:
+
+- `localhost:5167` — the auto-spawned local Python sidecar
+- `localhost:11434` — your local Ollama install
+
+No analytics, no crash reporting, no accounts. Your meetings, transcripts, and
+recordings never touch a network. There's no telemetry to opt out of — there's
+none to begin with, and you can verify that in the source.
 
 ## Requirements
 
 - macOS 13+ on Apple Silicon (M1 or later)
-- [Ollama](https://ollama.com) installed (for local LLM inference)
-- ~3 GB free disk for Whisper + embedding models
+- [Ollama](https://ollama.com) (for local LLM inference)
+- ~3 GB free disk for the Whisper + embedding models
+
+## Tech stack
+
+| Layer | Stack |
+|---|---|
+| Desktop shell | Tauri 2 + Rust + React 19 + TypeScript + Tailwind 4 |
+| Speech-to-text | whisper-rs (Metal) |
+| Audio | ScreenCaptureKit (system) + cpal (mic) |
+| Backend | FastAPI + SQLite + sqlite-vec (auto-spawned sidecar) |
+| Embeddings | BGE-M3 (multilingual) |
+| LLM | Ollama (local) or BYOK cloud providers |
 
 ## Build from source
 
-See [docs/BUILDING.md](./docs/BUILDING.md) for the full setup. Quick start:
+Prerequisites: `rustup`, Node 22 (via `nvm`), `uv`, `pnpm`, `cmake`.
 
 ```bash
-# Prerequisites: rustup, Node 22 (via nvm), uv, pnpm, cmake
 ./scripts/bootstrap.sh
 pnpm tauri:dev
 ```
@@ -53,16 +79,11 @@ Release build (`.app` + `.dmg`):
 ./scripts/build-release.sh
 ```
 
-See [docs/SIGNING.md](./docs/SIGNING.md) for code-signing setup.
+## Contributing
 
-## Privacy
-
-By default, **zero outbound network requests**. The app talks to:
-- `localhost:5167` (the auto-spawned Python sidecar)
-- `localhost:11434` (your Ollama install)
-
-See [docs/PRIVACY.md](./docs/PRIVACY.md).
+Issues and pull requests are welcome. Please open an issue to discuss larger
+changes before starting.
 
 ## License
 
-[MIT](./LICENSE). Contributions welcome — see [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md).
+[MIT](./LICENSE).
