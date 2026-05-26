@@ -1,6 +1,6 @@
 //! Automatic speech recognition via whisper-rs.
 //!
-//! Streaming design (Meetily-style): a single rolling buffer is fed to
+//! Streaming design: a single rolling buffer is fed to
 //! whisper at ~750 ms tick intervals. Stable segments are emitted as
 //! `transcript-update` Tauri events; the working tail goes out as
 //! `transcript-partial`. See `streamer.rs` for details.

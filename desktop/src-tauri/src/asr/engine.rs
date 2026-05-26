@@ -44,7 +44,7 @@ const MAX_PREV_TEXT_CHARS: usize = 80;
 /// real transcripts. A comma-separated list of proper nouns can't be
 /// completed into a sentence, so it's a safe priming signal.
 pub const DEFAULT_INITIAL_PROMPT: &str = "Meetwit, Tauri, Whisper, whisper.cpp, Ollama, qwen, \
-    Silero, sqlite-vec, BGE, GPT, Anthropic, Claude, OpenAI, Otter, Meetily, \
+    Silero, sqlite-vec, BGE, GPT, Anthropic, Claude, OpenAI, \
     Globex, Acme, Slack, GitHub, Linear, Zoom, Microsoft Teams, Google Meet, \
     Kubernetes, Postgres, Redis, FastAPI, React, TypeScript, Rust, Python.";
 
