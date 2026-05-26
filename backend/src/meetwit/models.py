@@ -58,9 +58,7 @@ class Folder(Base):
     name: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
-    parent: Mapped[Folder | None] = relationship(
-        back_populates="children", remote_side=[id]
-    )
+    parent: Mapped[Folder | None] = relationship(back_populates="children", remote_side=[id])
     children: Mapped[list[Folder]] = relationship(
         back_populates="parent", cascade="all, delete-orphan"
     )
@@ -96,9 +94,7 @@ class Meeting(Base):
     calendar_event_id: Mapped[str | None] = mapped_column(String(36), index=True)
     # ISO 639-1 code for the language the AI summary should be written in (#413).
     # Decoupled from the spoken language — defaults to English.
-    summary_language: Mapped[str] = mapped_column(
-        String(8), default="en", server_default="en"
-    )
+    summary_language: Mapped[str] = mapped_column(String(8), default="en", server_default="en")
 
     transcripts: Mapped[list[Transcript]] = relationship(
         back_populates="meeting", cascade="all, delete-orphan"

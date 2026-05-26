@@ -80,7 +80,9 @@ async def _make_meeting(client: AsyncClient, title: str = "M") -> str:
     return r.json()["id"]
 
 
-async def _add_transcripts(client: AsyncClient, mid: str, segs: list[tuple[float, float, str]]) -> None:
+async def _add_transcripts(
+    client: AsyncClient, mid: str, segs: list[tuple[float, float, str]]
+) -> None:
     r = await client.post(
         f"/meetings/{mid}/transcripts",
         json={"segments": [{"text": t, "audio_start": s, "audio_end": e} for s, e, t in segs]},
@@ -95,7 +97,9 @@ async def test_note_crud(client: AsyncClient) -> None:
     mid = await _make_meeting(client)
 
     # Create
-    r = await client.post(f"/meetings/{mid}/notes", json={"text": "first note", "audio_offset": 12.5})
+    r = await client.post(
+        f"/meetings/{mid}/notes", json={"text": "first note", "audio_offset": 12.5}
+    )
     assert r.status_code == 200, r.text
     note = r.json()
     assert note["text"] == "first note"

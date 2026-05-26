@@ -75,9 +75,7 @@ async def create_note(meeting_id: str, body: NoteCreate, request: Request) -> No
     async with Session(engine) as session:
         meeting = await session.get(Meeting, meeting_id)
         if meeting is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="meeting not found")
         note = Note(
             meeting_id=meeting_id,
             text=body.text.strip(),

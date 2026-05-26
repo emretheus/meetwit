@@ -485,9 +485,7 @@ async def merge_meetings(meeting_id: str, body: MergeRequest, request: Request) 
             # Bulk UPDATE keeps the ORM identity map out of it (no stale
             # cascade collections when we later delete the source).
             await session.execute(
-                update(Decision)
-                .where(Decision.meeting_id == src.id)
-                .values(meeting_id=meeting_id)
+                update(Decision).where(Decision.meeting_id == src.id).values(meeting_id=meeting_id)
             )
             await session.execute(
                 update(ActionItem)
@@ -495,9 +493,7 @@ async def merge_meetings(meeting_id: str, body: MergeRequest, request: Request) 
                 .values(meeting_id=meeting_id)
             )
             await session.execute(
-                update(Conflict)
-                .where(Conflict.meeting_id == src.id)
-                .values(meeting_id=meeting_id)
+                update(Conflict).where(Conflict.meeting_id == src.id).values(meeting_id=meeting_id)
             )
 
             # Extend the target's end time to cover this source.

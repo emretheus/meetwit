@@ -157,9 +157,7 @@ class TemplateOut(BaseModel):
 def list_summary_templates() -> list[TemplateOut]:
     from meetwit.services.templates import list_templates
 
-    return [
-        TemplateOut(id=t.id, name=t.name, description=t.description) for t in list_templates()
-    ]
+    return [TemplateOut(id=t.id, name=t.name, description=t.description) for t in list_templates()]
 
 
 @router.get("/post-meeting/{meeting_id}/status")

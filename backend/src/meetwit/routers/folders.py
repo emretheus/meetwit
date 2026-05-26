@@ -193,9 +193,7 @@ async def delete_folder(folder_id: str, request: Request) -> dict[str, str]:
                 frontier.append(child_id)
 
         # Rehome every meeting in any of these folders to the root.
-        meetings = await session.execute(
-            select(Meeting).where(Meeting.folder_id.in_(to_delete))
-        )
+        meetings = await session.execute(select(Meeting).where(Meeting.folder_id.in_(to_delete)))
         for m in meetings.scalars().all():
             m.folder_id = None
 
