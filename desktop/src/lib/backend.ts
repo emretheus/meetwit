@@ -1,12 +1,26 @@
 /**
  * Typed HTTP client for the local Python sidecar.
- * Base URL is fixed at 127.0.0.1:5167 (matches `Settings.port` in backend/config.py).
+ *
+ * The sidecar binds an OS-assigned free port (not a fixed 5167) to avoid
+ * collisions with stale/foreign sidecars, so the base URL is resolved at
+ * startup from the Rust core via `setBackendBaseUrl()`. The fallback below is
+ * only used if a fetch somehow fires before resolution.
  */
 
-const BASE_URL = 'http://127.0.0.1:5167';
+let baseUrl = 'http://127.0.0.1:5167';
+
+/** Set the resolved sidecar base URL (called once at startup from Rust). */
+export function setBackendBaseUrl(url: string): void {
+  if (url) baseUrl = url.replace(/\/+$/, '');
+}
+
+/** The current resolved sidecar base URL. */
+export function backendBaseUrl(): string {
+  return baseUrl;
+}
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(`${BASE_URL}${path}`, {
+  const resp = await fetch(`${baseUrl}${path}`, {
     headers: { 'content-type': 'application/json' },
     ...init,
   });
@@ -526,7 +540,7 @@ export type SseHandlers = {
 };
 
 async function streamSse(path: string, body: object, h: SseHandlers): Promise<void> {
-  const resp = await fetch(`${BASE_URL}${path}`, {
+  const resp = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
     body: JSON.stringify(body),
