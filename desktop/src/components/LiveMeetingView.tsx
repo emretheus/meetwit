@@ -55,9 +55,9 @@ interface LiveMeetingViewProps {
 
 /**
  * The live recording surface — transcript on the left, Copilot on the right,
- * record/pause/stop toolbar. Hosted both by Home (record-in-place, Meetily
- * style) and the /meeting/live route. State is global (Zustand), so it
- * survives navigation between the two.
+ * record/pause/stop toolbar. Hosted both by Home (record-in-place) and the
+ * /meeting/live route. State is global (Zustand), so it survives navigation
+ * between the two.
  */
 export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
   const meeting = useMeeting();

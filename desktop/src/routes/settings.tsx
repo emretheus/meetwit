@@ -861,7 +861,7 @@ function SummaryTab({
 
   return (
     <>
-      {/* Auto Summary — single row, no nested duplicate. Matches Meetily. */}
+      {/* Auto Summary — single row, no nested duplicate. */}
       <Card className="mb-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">

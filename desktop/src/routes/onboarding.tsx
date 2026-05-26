@@ -383,7 +383,7 @@ function DownloadStep({
   onContinue: () => void;
 }) {
   const bothDone = whisper.state === 'done' && llm.state === 'done';
-  // Auto-start whisper on enter — Meetily kicks off the first model
+  // Auto-start whisper on enter — kick off the first model
   // automatically so the user has something to watch.
   useEffect(() => {
     if (whisper.state === 'idle') onStartWhisper();

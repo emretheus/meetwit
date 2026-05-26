@@ -29,7 +29,7 @@
   --color-text-dim: #94a3b8;        /* labels, captions */
   --color-text-disabled: #cbd5e1;
 
-  /* Brand — deep trust blue. Richer/more saturated than Meetily's pale indigo. */
+  /* Brand — deep, saturated trust blue. */
   --color-brand-50: #eff6ff;
   --color-brand-100: #dbeafe;
   --color-brand-200: #bfdbfe;
@@ -40,8 +40,8 @@
   --color-brand-700: #1d4ed8;
   --color-brand-800: #1e40af;
 
-  /* Sidebar — Meetily-aligned near-white with a hint of warmth.
-     Light-on-light, subtle borders. Reads as "notes app", not "dev tool". */
+  /* Sidebar — near-white with a hint of warmth. Light-on-light, subtle
+     borders. Reads as "notes app", not "dev tool". */
   --color-sidebar-bg: #f6f6f7;
   --color-sidebar-surface: #ffffff;
   --color-sidebar-text: #18181b;
@@ -51,7 +51,7 @@
   --color-sidebar-active: #ffffff;
   --color-sidebar-border: #e4e4e7;
 
-  /* Recording — warm orange accent (not Meetily's red). Pairs with teal. */
+  /* Recording — warm orange accent. Pairs with teal. */
   --color-recording: #f97316;
   --color-recording-bg: #fff7ed;
   --color-recording-ring: rgba(249, 115, 22, 0.18);
