@@ -20,9 +20,6 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 use hound::WavWriter;
 use parking_lot::Mutex;
-use rubato::{
-    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
-};
 use serde::Serialize;
 
 use super::ring::{SampleRing, rms};
@@ -246,24 +243,10 @@ fn run_stream(
     let resampler = if device_rate == TARGET_SAMPLE_RATE {
         None
     } else {
-        let params = SincInterpolationParameters {
-            sinc_len: 256,
-            f_cutoff: 0.95,
-            interpolation: SincInterpolationType::Linear,
-            oversampling_factor: 256,
-            window: WindowFunction::BlackmanHarris2,
-        };
-        let chunk_size = (device_rate as usize / 100).max(64);
-        Some(Mutex::new(
-            SincFixedIn::<f32>::new(
-                f64::from(TARGET_SAMPLE_RATE) / f64::from(device_rate),
-                2.0,
-                params,
-                chunk_size,
-                1,
-            )
-            .context("building resampler")?,
-        ))
+        Some(Mutex::new(MicResampler::new(
+            device_rate,
+            TARGET_SAMPLE_RATE,
+        )))
     };
     let resampler = Arc::new(resampler);
 
@@ -372,16 +355,120 @@ fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
     out
 }
 
-fn resample_block(resampler: &Mutex<SincFixedIn<f32>>, mono: &[f32]) -> Result<Vec<f32>> {
-    let mut guard = resampler.lock();
-    let chunk = guard.input_frames_next();
-    let mut out = Vec::with_capacity(mono.len() / 3 + 16);
-    let mut idx = 0;
-    while idx + chunk <= mono.len() {
-        let input = vec![mono[idx..idx + chunk].to_vec()];
-        let processed = guard.process(&input, None).context("rubato process")?;
-        out.extend_from_slice(&processed[0]);
-        idx += chunk;
+/// Streaming linear-interpolation resampler (mic device rate → 16 kHz).
+///
+/// We dropped rubato's `SincFixedIn`: it requires fixed-size input chunks, and
+/// feeding it the mic's arbitrary block sizes (512 vs the expected 480) made
+/// the old code drop the remainder every callback — ~6% of samples — shredding
+/// the waveform into glitchy audio that whisper could only hallucinate over.
+///
+/// Linear interpolation across an unbroken sample stream (carrying one boundary
+/// sample + a fractional read position between calls) can't drop or glitch
+/// samples and is plenty for speech downsampling. This mirrors Meetily's
+/// (working) resampler.
+struct MicResampler {
+    ratio: f64,   // out_rate / in_rate
+    last: f32,    // last input sample of the previous block (for interpolation across the boundary)
+    pos: f64,     // fractional read position into the current logical stream
+    primed: bool, // have we seen at least one sample yet?
+}
+
+impl MicResampler {
+    fn new(in_rate: u32, out_rate: u32) -> Self {
+        Self {
+            ratio: f64::from(out_rate) / f64::from(in_rate),
+            last: 0.0,
+            pos: 0.0,
+            primed: false,
+        }
     }
-    Ok(out)
+
+    /// Resample one block. `pos` is kept relative to the start of THIS block;
+    /// `last` bridges the gap to the previous block so there's no discontinuity.
+    fn process(&mut self, input: &[f32]) -> Vec<f32> {
+        if input.is_empty() {
+            return Vec::new();
+        }
+        let step = 1.0 / self.ratio; // input samples advanced per output sample
+        let mut out = Vec::with_capacity((input.len() as f64 * self.ratio) as usize + 2);
+
+        // Read positions are in input-sample units. Index -1 refers to `last`
+        // (the previous block's final sample) so interpolation is continuous.
+        let sample_at = |i: isize, last: f32| -> f32 {
+            if i < 0 {
+                last
+            } else {
+                input[(i as usize).min(input.len() - 1)]
+            }
+        };
+
+        if !self.primed {
+            self.primed = true;
+            self.pos = 0.0;
+        }
+
+        while self.pos < input.len() as f64 {
+            let i0 = self.pos.floor() as isize;
+            let frac = (self.pos - i0 as f64) as f32;
+            let a = sample_at(i0, self.last);
+            let b = sample_at(i0 + 1, self.last);
+            out.push(a + (b - a) * frac);
+            self.pos += step;
+        }
+        // Carry the boundary sample + the leftover fractional position into the
+        // next block so we never drop or duplicate audio.
+        self.last = input[input.len() - 1];
+        self.pos -= input.len() as f64;
+        out
+    }
+}
+
+fn resample_block(resampler: &Mutex<MicResampler>, mono: &[f32]) -> Result<Vec<f32>> {
+    Ok(resampler.lock().process(mono))
+}
+
+#[cfg(test)]
+mod resampler_tests {
+    use super::MicResampler;
+
+    // A 48k→16k resample of a 440Hz sine, fed in irregular block sizes (like
+    // the mic's 512-frame callbacks), must produce a clean continuous 440Hz
+    // sine — not glitches/dropouts. We check output length is ~1/3 of input
+    // and that consecutive samples never jump wildly (no discontinuities).
+    #[test]
+    fn linear_resample_48k_to_16k_is_clean() {
+        let f = 440.0;
+        let in_rate = 48000.0;
+        let total: Vec<f32> = (0..48000)
+            .map(|n| (2.0 * std::f32::consts::PI * f * n as f32 / in_rate).sin())
+            .collect();
+        let mut rs = MicResampler::new(48000, 16000);
+        let mut out = Vec::new();
+        // Feed in irregular 512-sample blocks (mimics cpal callbacks).
+        for chunk in total.chunks(512) {
+            out.extend(rs.process(chunk));
+        }
+        // ~1/3 the samples (16k from 48k).
+        let expected = total.len() / 3;
+        assert!(
+            (out.len() as i64 - expected as i64).abs() < 50,
+            "len {} not ~{}",
+            out.len(),
+            expected
+        );
+        // No glitches: max abs jump between consecutive output samples should be
+        // small for a 440Hz sine at 16k (per-sample phase step is tiny). A
+        // dropped/duplicated chunk would create a >0.5 discontinuity.
+        let max_jump = out
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_jump < 0.3,
+            "discontinuity detected: max_jump={max_jump}"
+        );
+        // Amplitude preserved (sine stays ~[-1,1], peak near 1).
+        let peak = out.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+        assert!(peak > 0.9 && peak <= 1.01, "peak={peak}");
+    }
 }

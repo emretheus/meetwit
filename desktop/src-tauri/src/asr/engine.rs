@@ -339,5 +339,4 @@ mod tests {
         let got = collapse_repeats("That is a really really good question.");
         assert_eq!(got, "That is a really really good question.");
     }
-
 }
