@@ -17,7 +17,13 @@ use super::runtime::{RuntimeInfo, runtime_path};
 
 /// Sidecar host (loopback only).
 const HOST: &str = "127.0.0.1";
-/// Default port — matches `backend/src/meetwit/config.py`.
+/// Sentinel meaning "let the OS assign a free port". Avoids collisions with a
+/// stale sidecar, a second app instance, or any process squatting a fixed port
+/// — which otherwise leaves the app spinning on a foreign/empty backend.
+pub const AUTO_PORT: u16 = 0;
+/// Legacy fixed port (kept for dev tooling / curl convenience). Not used for
+/// binding anymore — see `pick_free_port`.
+#[allow(dead_code)]
 pub const DEFAULT_PORT: u16 = 5167;
 /// Max time we wait for the sidecar to respond to `/health`.
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(15);
@@ -39,7 +45,7 @@ impl SpawnOptions {
     /// to `desktop/`. This is what `cargo tauri dev` uses.
     pub fn dev_default(workspace_root: &std::path::Path) -> Self {
         Self {
-            port: DEFAULT_PORT,
+            port: AUTO_PORT,
             working_dir: Some(workspace_root.join("backend")),
             program: "uv".to_string(),
             args: vec!["run".into(), "python".into(), "-m".into(), "meetwit".into()],
@@ -51,12 +57,33 @@ impl SpawnOptions {
     pub fn release(resources_dir: &std::path::Path) -> Self {
         let exe = resources_dir.join("python-backend").join("meetwit-sidecar");
         Self {
-            port: DEFAULT_PORT,
+            port: AUTO_PORT,
             working_dir: None,
             program: exe.display().to_string(),
             args: vec![],
         }
     }
+
+    /// Replace an AUTO_PORT with a concrete OS-assigned free port, once, so it
+    /// stays fixed across supervisor restarts. Call this before the first spawn.
+    pub fn resolve_port(&mut self) -> Result<()> {
+        if self.port == AUTO_PORT {
+            self.port = pick_free_port().context("could not find a free port for the sidecar")?;
+        }
+        Ok(())
+    }
+}
+
+/// Ask the OS for a free TCP port on loopback by binding to port 0, reading the
+/// assigned port, then immediately releasing it. There's a tiny TOCTOU window
+/// before the sidecar rebinds it, but on loopback with an OS-random high port
+/// the collision odds are negligible — and this is strictly safer than a fixed
+/// port that a stale process can squat.
+fn pick_free_port() -> Result<u16> {
+    let listener = std::net::TcpListener::bind((HOST, 0))
+        .context("binding to an ephemeral port")?;
+    let port = listener.local_addr().context("reading assigned port")?.port();
+    Ok(port)
 }
 
 /// A handle to the running sidecar — kept inside Tauri's app state.
@@ -126,6 +153,9 @@ impl SidecarManager {
     /// Returns a `SidecarHandle` that the rest of the app uses to talk to it,
     /// and that owns the lifetime of the child process.
     pub async fn spawn(opts: SpawnOptions) -> Result<SidecarHandle> {
+        // The port is resolved once by the caller (see `SpawnOptions::resolve_port`)
+        // and stays fixed for the session — so the supervisor's restarts reuse
+        // the same already-free port and the client/handle stay valid.
         let port = opts.port;
         let base_url = format!("http://{HOST}:{port}");
 

@@ -28,7 +28,15 @@ pub fn run() {
             log::info!("Meetwit starting (version {})", app.package_info().version);
 
             let handle = app.handle().clone();
-            let opts = build_spawn_options();
+            let mut opts = build_spawn_options();
+            // Pick a free port once, up front, so the sidecar — and every
+            // supervisor restart — uses the same collision-free port for the
+            // life of this app instance.
+            if let Err(err) = opts.resolve_port() {
+                log::error!("failed to allocate sidecar port: {err}");
+                let _ = handle.emit("backend-failed", err.to_string());
+                return Ok(());
+            }
 
             tauri::async_runtime::spawn(async move {
                 match SidecarManager::spawn(opts.clone()).await {
