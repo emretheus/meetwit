@@ -1,6 +1,6 @@
 {
   "name": "meetwit-desktop",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Meetwit desktop app — Tauri 2 shell.",

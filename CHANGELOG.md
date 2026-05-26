@@ -5,6 +5,11 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-05-26
+
+First public release. Privacy-first, local-first AI meeting assistant for
+macOS (Apple Silicon). Signed + notarized DMG via GitHub Releases.
+
 ### Added
 - Multilingual transcription (Whisper multilingual models) and BGE-M3 embeddings
   so retrieval and answers work in any language
@@ -15,6 +20,22 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - Merge interrupted meetings into one
 - Nested folders for organizing meetings
 - Transcript export to plain text, WebVTT, SRT, and JSON (alongside Markdown/PDF)
+
+### Changed
+- Sidecar binds an OS-assigned free port (was fixed 5167) so a stale or second
+  instance can't cause a hung startup or a wrong-backend attach
+- Removed the non-functional analytics toggle; settings now state the
+  zero-telemetry stance plainly
+
+### Fixed
+- Imported 24/32-bit WAVs no longer clip to noise (normalize by true bit depth)
+- Non-English meetings no longer fall back to an English-only model
+- Live notes are now included in exports
+
+### Migrations
+- 0005–0008. **0008 is destructive**: moving to BGE-M3 (1024-dim) recreates the
+  sqlite-vec tables and re-indexes documents (raw transcripts preserved).
+  **Back up `meetwit.sqlite` before upgrading an existing install.**
 
 ## [0.0.1] — 2026-05-20 (pre-alpha)
 
@@ -55,5 +76,6 @@ First scaffold + V1 implementation. Not yet user-tested on hardware variants.
 - Auto-update deferred to V1.1
 - API keys (BYOK) stored in SQLite plain text — Keychain migration in V1.1
 
-[Unreleased]: https://github.com/emretheus/meetwit/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/emretheus/meetwit/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/emretheus/meetwit/compare/v0.0.1...v1.0.0
 [0.0.1]: https://github.com/emretheus/meetwit/releases/tag/v0.0.1
