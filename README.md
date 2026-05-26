@@ -47,6 +47,19 @@ No analytics, no crash reporting, no accounts. Your meetings, transcripts, and
 recordings never touch a network. There's no telemetry to opt out of — there's
 none to begin with, and you can verify that in the source.
 
+## Install
+
+1. Download the latest `Meetwit_*_aarch64.dmg` from the
+   [Releases](https://github.com/emretheus/meetwit/releases/latest) page.
+2. Open the `.dmg` and drag **Meetwit** to your Applications folder.
+3. Launch it. macOS will ask for **Microphone** and **Screen Recording**
+   permission — both are needed to capture your side of the call and the other
+   participants' audio.
+
+Releases are **signed with a Developer ID and notarized by Apple**, so the app
+opens normally — no "unidentified developer" warning, no security workaround.
+You can verify your download against the `SHA-256` published in the release.
+
 ## Requirements
 
 - macOS 13+ on Apple Silicon (M1 or later)
