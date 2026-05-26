@@ -117,17 +117,21 @@ impl Drop for AsrStreamer {
 
 /// Analysis window for RMS (~30 ms @ 16 kHz).
 const SEG_WINDOW: usize = (TARGET_SAMPLE_RATE as usize) / 33; // ≈485 samples
-/// RMS to ENTER speech. Matches the mixer's VAD_RMS_ON.
-const SEG_RMS_ON: f32 = 0.010;
-/// RMS to stay in speech (hysteresis — lower than ON so we don't chatter).
-const SEG_RMS_OFF: f32 = 0.006;
-/// Consecutive sub-threshold windows before declaring speech ended
-/// (~1.0 s of silence bridges natural inter-clause pauses).
-const SEG_HANG_WINDOWS: u32 = 33;
+/// RMS to ENTER speech. Real speech measures ~0.05-0.08; this sits well above
+/// typical room/mic ambient (~0.003-0.01) so noise doesn't latch us "on".
+const SEG_RMS_ON: f32 = 0.020;
+/// RMS to stay in speech (hysteresis). Inter-word/clause gaps fall below this,
+/// so we detect end-of-speech instead of staying latched through pauses.
+const SEG_RMS_OFF: f32 = 0.012;
+/// Consecutive sub-threshold windows before declaring speech ended. ~0.7 s
+/// bridges normal pauses but still cuts on real sentence breaks.
+const SEG_HANG_WINDOWS: u32 = 23;
 /// Minimum burst length to bother transcribing (drop tiny "um"s / clicks).
-const SEG_MIN_SPEECH_SECS: f64 = 0.25;
-/// Force-finalize a burst this long even without a pause (unbroken monologue).
-const MAX_SPEECH_SECS: f64 = 20.0;
+const SEG_MIN_SPEECH_SECS: f64 = 0.4;
+/// Force-finalize a burst this long even without a pause. Kept short: whisper
+/// hallucinates ("Thank you.", "You") on long blobs that are mostly noise, and
+/// chunks ≤~10 s transcribe far more reliably for live use.
+const MAX_SPEECH_SECS: f64 = 10.0;
 
 /// A finalized speech burst ready to transcribe.
 struct SpeechBurst {
@@ -139,10 +143,10 @@ struct SpeechBurst {
 /// `SpeechBurst` whenever a speech run ends (after the hang gap) or hits the
 /// max length.
 struct EnergySegmenter {
-    pending: Vec<f32>,    // leftover samples < one window
+    pending: Vec<f32>, // leftover samples < one window
     in_speech: bool,
-    buf: Vec<f32>,        // current burst's samples
-    burst_start: f64,     // origin seconds of the current burst
+    buf: Vec<f32>,    // current burst's samples
+    burst_start: f64, // origin seconds of the current burst
     silent_windows: u32,
 }
 
@@ -279,8 +283,8 @@ where
             if burst.samples.is_empty() {
                 continue;
             }
-            let seg_end = burst.start_seconds
-                + burst.samples.len() as f64 / f64::from(TARGET_SAMPLE_RATE);
+            let seg_end =
+                burst.start_seconds + burst.samples.len() as f64 / f64::from(TARGET_SAMPLE_RATE);
             log::info!(
                 "vad.speech_end origin_start={:.2}s origin_end={:.2}s samples={}",
                 burst.start_seconds,
