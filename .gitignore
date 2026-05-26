@@ -115,3 +115,9 @@ logs/
 # ─── Plan / scratch ──────────────────────────────────────────────────────
 scratch/
 .tmp/
+
+# ─── Internal docs (kept out of the public repo) ─────────────────────────
+# Design notes, competitive analysis, weekly status, and indexing fixtures
+# live locally but are not part of the public project.
+/docs/
+/sample-docs/

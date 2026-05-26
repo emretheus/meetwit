@@ -5,7 +5,16 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-V1 development. All weeks 1-16 complete, awaiting V1 acceptance hardware testing.
+### Added
+- Multilingual transcription (Whisper multilingual models) and BGE-M3 embeddings
+  so retrieval and answers work in any language
+- Summary output language, independent of the spoken language
+- User-editable domain vocabulary to improve transcription of names and jargon
+- Live notes during recording
+- Import an existing audio file and transcribe it
+- Merge interrupted meetings into one
+- Nested folders for organizing meetings
+- Transcript export to plain text, WebVTT, SRT, and JSON (alongside Markdown/PDF)
 
 ## [0.0.1] — 2026-05-20 (pre-alpha)
 
@@ -27,8 +36,8 @@ First scaffold + V1 implementation. Not yet user-tested on hardware variants.
 - **W12** Conflict detection: per-batch retrieval + LLM contradiction check with confidence threshold ≥ 0.8; tunable per request
 - **W13** Remaining screens (`/knowledge`, `/memory`, `/tasks`, `/settings`, `/meeting/$id/summary`); SideNav; PyInstaller `--onedir` spec; full `build-release.sh`
 - **W14** 6-step `/onboarding` wizard; Whisper model downloader with live progress; permission deep-links; release-mode `SpawnOptions` for the bundled sidecar binary
-- **W15** Tauri bundles PyInstaller output into `Contents/Resources/python-backend/`; full `build.yml` CI workflow with optional signing + notarization; SIGNING.md guide
-- **W16** V1 acceptance test plan; THREAT_MODEL.md; this CHANGELOG; ROADMAP.md
+- **W15** Tauri bundles PyInstaller output into `Contents/Resources/python-backend/`; full `build.yml` CI workflow with optional signing + notarization
+- **W16** V1 acceptance test plan; threat model; this CHANGELOG; ROADMAP.md
 
 ### Privacy promises
 

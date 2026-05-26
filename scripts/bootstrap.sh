@@ -24,7 +24,7 @@ if [ ${#missing[@]} -gt 0 ]; then
   for m in "${missing[@]}"; do
     echo "    - $m"
   done
-  echo "See docs/BUILDING.md for installation instructions."
+  echo "See the README for installation instructions."
   exit 1
 fi
 
