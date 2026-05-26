@@ -7,28 +7,28 @@ requires-python = ">=3.13,<3.15"
 license = { text = "MIT" }
 authors = [{ name = "Meetwit contributors" }]
 dependencies = [
-    "fastapi==0.115.*",
-    "uvicorn[standard]==0.32.*",
-    "pydantic==2.10.*",
-    "pydantic-settings==2.7.*",
+    "fastapi>=0.115,<0.137",
+    "uvicorn[standard]>=0.32,<0.49",
+    "pydantic>=2.10,<2.14",
+    "pydantic-settings>=2.7,<2.15",
     "sqlalchemy==2.0.*",
-    "aiosqlite==0.20.*",
-    "sqlite-vec==0.1.6",
+    "aiosqlite>=0.20,<0.23",
+    "sqlite-vec==0.1.9",
     "httpx==0.28.*",
-    "structlog==24.*",
-    "alembic==1.14.*",
+    "structlog>=24,<26",
+    "alembic>=1.14,<1.19",
     "greenlet==3.*",  # required by sqlalchemy async on Python 3.13
     # Document parsing
-    "pymupdf==1.25.*",
-    "python-docx==1.1.*",
-    "markdown-it-py==3.0.*",
+    "pymupdf>=1.25,<1.28",
+    "python-docx>=1.1,<1.3",
+    "markdown-it-py>=3.0,<4.3",
     # Embeddings
-    "sentence-transformers==3.3.*",
+    "sentence-transformers>=3.3,<5.6",
     # Search
     "rank-bm25==0.2.*",
     # LLM
-    "ollama==0.4.*",
-    "sse-starlette==2.1.*",
+    "ollama>=0.4,<0.7",
+    "sse-starlette>=2.1,<3.5",
 ]
 
 [project.optional-dependencies]
