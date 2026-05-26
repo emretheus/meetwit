@@ -1,6 +1,6 @@
-//! Streaming ASR runner — Silero-VAD-segmented (Meetily-style).
+//! Streaming ASR runner — Silero-VAD-segmented.
 //!
-//! Design (mirrors `meetily`'s `audio/transcription` worker):
+//! Design:
 //!
 //!   1. A background thread consumes 16 kHz mono samples from the mixer's
 //!      continuous output ring.
@@ -12,7 +12,7 @@
 //!   4. The resulting transcript is emitted as a single committed
 //!      `TranscriptSegment` event.
 //!
-//! Tuning matches Meetily's pipeline:
+//! VAD tuning:
 //!
 //!   * `positive_speech_threshold = 0.50`, `negative_speech_threshold = 0.35`
 //!   * `pre_speech_pad = 300 ms`, `post_speech_pad = 400 ms`
@@ -116,7 +116,7 @@ impl Drop for AsrStreamer {
 }
 
 fn build_vad_config() -> VadConfig {
-    // Mirror Meetily's `audio/vad.rs` tuning. The struct exposes all knobs
+    // Tuned VAD config. The struct exposes all knobs
     // we care about; construct it directly so we don't depend on the
     // upstream Default value drifting.
     VadConfig {

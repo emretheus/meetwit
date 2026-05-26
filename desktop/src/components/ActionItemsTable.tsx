@@ -7,7 +7,7 @@ interface ActionItemsTableProps {
 }
 
 /**
- * Meetily-style structured table of action items.
+ * Structured table of action items.
  * Columns: Done · Task · Owner · Due · Status.
  */
 export function ActionItemsTable({ items, onToggle }: ActionItemsTableProps) {

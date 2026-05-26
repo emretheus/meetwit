@@ -66,7 +66,7 @@ export function SideNav() {
     if (starting) return;
     setStarting(true);
     try {
-      // Record in place: Home is the recording surface (Meetily style), so we
+      // Record in place: Home is the recording surface, so we
       // route there (no-op if already there) and start — no live-page jump.
       await navigate({ to: '/' });
       if (!running) {
@@ -155,7 +155,7 @@ export function SideNav() {
           <SidebarNotesList />
         </nav>
 
-        {/* Footer stack — Meetily ordering: red CTA / Import Audio / Settings / About / version */}
+        {/* Footer stack: red CTA / Import Audio / Settings / About / version */}
         <div className="flex flex-col gap-1.5 border-t border-[var(--color-sidebar-border)] px-3 pt-3 pb-3">
           {running ? (
             <button

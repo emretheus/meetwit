@@ -36,7 +36,7 @@ function HomePage() {
 
   const effectiveError = error ?? backendError;
 
-  // Home IS the recording surface (Meetily style): show the live view ONLY
+  // Home IS the recording surface: show the live view ONLY
   // while a recording is actually in progress. Once stopped, Home returns to
   // the welcome state — the finished note is opened from the sidebar / the
   // "View Meeting" toast, not left lingering here as a live page.
