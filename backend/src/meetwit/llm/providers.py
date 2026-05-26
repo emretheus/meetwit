@@ -24,6 +24,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import socket
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
 from urllib.parse import urlparse
@@ -83,7 +84,7 @@ def _validate_base_url(raw: str) -> str:
     except socket.gaierror as exc:
         raise ValueError(f"base_url host does not resolve: {host}") from exc
     for info in infos:
-        addr = info[4][0]
+        addr = str(info[4][0])
         try:
             ip = ipaddress.ip_address(addr.split("%", 1)[0])  # strip any zone id
         except ValueError:
@@ -269,7 +270,7 @@ def _anthropic_payload(
     }
 
 
-async def stream_chat(cfg: LlmConfig, messages: list[_Msg]):
+async def stream_chat(cfg: LlmConfig, messages: list[_Msg]) -> AsyncIterator[str]:
     """Async generator of text deltas across any provider."""
     if cfg.provider == "ollama":
         async for tok in _ollama_stream(cfg, messages):
@@ -339,7 +340,7 @@ def _strip_code_fence(text: str) -> str:
 # ─── Ollama ──────────────────────────────────────────────────────────────
 
 
-async def _ollama_stream(cfg: LlmConfig, messages: list[_Msg]):
+async def _ollama_stream(cfg: LlmConfig, messages: list[_Msg]) -> AsyncIterator[str]:
     payload = {
         "model": cfg.model,
         "messages": [{"role": m.role, "content": m.content} for m in messages],
@@ -392,7 +393,7 @@ async def _ollama_json(
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(f"{base}/api/chat", json=payload)
         resp.raise_for_status()
-        return resp.json().get("message", {}).get("content", "")
+        return str(resp.json().get("message", {}).get("content", "") or "")
 
 
 # ─── OpenAI-compatible (OpenAI / Groq / OpenRouter / custom) ──────────────
@@ -414,7 +415,7 @@ def _openai_headers(cfg: LlmConfig) -> dict[str, str]:
     return h
 
 
-async def _openai_stream(cfg: LlmConfig, messages: list[_Msg]):
+async def _openai_stream(cfg: LlmConfig, messages: list[_Msg]) -> AsyncIterator[str]:
     base = _openai_base(cfg)
     payload = _openai_payload(cfg, messages, stream=True, json_mode=False)
     async with (
@@ -458,7 +459,7 @@ async def _openai_json(cfg: LlmConfig, system: str, user: str, *, timeout: float
         )
         resp.raise_for_status()
         data = resp.json()
-        return (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        return str((data.get("choices") or [{}])[0].get("message", {}).get("content", "") or "")
 
 
 # ─── Anthropic ─────────────────────────────────────────────────────────────
@@ -472,7 +473,7 @@ def _anthropic_headers(cfg: LlmConfig) -> dict[str, str]:
     }
 
 
-async def _anthropic_stream(cfg: LlmConfig, messages: list[_Msg]):
+async def _anthropic_stream(cfg: LlmConfig, messages: list[_Msg]) -> AsyncIterator[str]:
     # Anthropic wants `system` separate from the message list.
     system = "\n\n".join(m.content for m in messages if m.role == "system")
     convo = [m for m in messages if m.role != "system"]

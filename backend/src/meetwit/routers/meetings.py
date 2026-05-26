@@ -727,7 +727,7 @@ async def live_ask(body: LiveAskRequest, request: Request) -> EventSourceRespons
     engine = _engine(request)
     settings = request.app.state.settings
     base_cfg = LlmConfig(
-        provider=body.provider,  # type: ignore[arg-type]
+        provider=body.provider,
         model=body.model,
         api_key=body.api_key,
         base_url=body.base_url,

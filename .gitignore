@@ -76,7 +76,9 @@ desktop/src-tauri/binaries/python-backend/*
 desktop/src-tauri/WixTools/
 
 # ─── Generated routes (TanStack Router) ──────────────────────────────────
-desktop/src/routeTree.gen.ts
+# Committed on purpose: the Vite plugin only regenerates it during dev/build,
+# so `tsc --noEmit` (which CI runs before build) needs it to already exist.
+# Tracking it keeps typecheck deterministic. Regenerated automatically on build.
 
 # ─── App runtime data (created by Meetwit at run time) ───────────────────
 # These live in ~/Library/Application Support/Meetwit/, not in the repo —

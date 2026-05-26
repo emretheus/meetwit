@@ -260,7 +260,11 @@ async def sync_events(body: EventSyncBatch, request: Request) -> dict[str, objec
             # a tz-aware datetime would otherwise be persisted as naive local
             # wall-clock and lose its offset — which then reads back ambiguous
             # and skews time-based comparisons (calendar reminders, windowing).
-            row.starts_at = _to_utc(ev.starts_at)
+            # ev.starts_at is required (non-None), so _to_utc never returns None
+            # here; assert it so the assignment to the non-optional column types.
+            starts = _to_utc(ev.starts_at)
+            assert starts is not None
+            row.starts_at = starts
             row.ends_at = _to_utc(ev.ends_at)
             row.all_day = ev.all_day
             row.attendees = attendees_json

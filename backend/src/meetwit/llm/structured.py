@@ -42,7 +42,7 @@ class MeetingSummary(BaseModel):
     recommended_next_steps: list[str] = []
 
     @classmethod
-    def model_json_schema(cls, *args: object, **kwargs: object) -> dict[str, object]:  # type: ignore[override]
+    def model_json_schema(cls, *args: object, **kwargs: object) -> dict[str, object]:
         # Force `overview` into `required` even though it has a default, so
         # Ollama/OpenAI structured output is constrained to emit it. Validation
         # stays lenient (the default handles a stray omission).

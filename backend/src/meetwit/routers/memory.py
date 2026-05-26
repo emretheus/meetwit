@@ -52,7 +52,7 @@ async def ask(req: AskRequest, request: Request) -> EventSourceResponse:
     chunks = await retriever.search(req.question, top_k=req.top_k)
     settings = request.app.state.settings
     base_cfg = LlmConfig(
-        provider=req.provider,  # type: ignore[arg-type]
+        provider=req.provider,
         model=req.model,
         api_key=req.api_key,
         base_url=req.base_url,
