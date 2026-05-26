@@ -145,11 +145,16 @@ jobs:
           if [ "$DO_SIGN" != "true" ]; then unset APPLE_SIGNING_IDENTITY; fi
           pnpm tauri:build
 
-      - name: Notarize + staple
+      # Tauri already signs + notarizes the .app during the build. The DMG is
+      # the distribution artifact, so notarize + staple IT too (stapling lets
+      # Gatekeeper verify offline). NOTE: this is a Cargo workspace, so bundles
+      # land in the workspace-root target/, not desktop/src-tauri/target/.
+      - name: Notarize + staple DMG
         if: ${{ env.DO_SIGN == 'true' }}
         run: |
           set -euo pipefail
-          DMG=$(find desktop/src-tauri/target/release/bundle/dmg -name '*.dmg' | head -1)
+          DMG=$(find target/release/bundle/dmg -name '*.dmg' | head -1)
+          test -n "$DMG" || { echo "no DMG found under target/release/bundle/dmg"; ls -R target/release/bundle || true; exit 1; }
           echo "Notarizing $DMG"
           xcrun notarytool submit "$DMG" \
             --apple-id "$APPLE_ID" \
@@ -162,7 +167,7 @@ jobs:
       - name: Checksum
         run: |
           set -euo pipefail
-          DMG=$(find desktop/src-tauri/target/release/bundle/dmg -name '*.dmg' | head -1)
+          DMG=$(find target/release/bundle/dmg -name '*.dmg' | head -1)
           shasum -a 256 "$DMG" | tee "$DMG.sha256"
 
       - name: Upload CI artifact
@@ -170,8 +175,8 @@ jobs:
         with:
           name: Meetwit-macos-arm64
           path: |
-            desktop/src-tauri/target/release/bundle/dmg/*.dmg
-            desktop/src-tauri/target/release/bundle/dmg/*.dmg.sha256
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/dmg/*.dmg.sha256
           retention-days: 14
 
       # ── Publish a GitHub Release on a tag ────────────────────────────────
@@ -180,8 +185,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            desktop/src-tauri/target/release/bundle/dmg/*.dmg
-            desktop/src-tauri/target/release/bundle/dmg/*.dmg.sha256
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/dmg/*.dmg.sha256
           draft: true
           generate_release_notes: true
           body: |
