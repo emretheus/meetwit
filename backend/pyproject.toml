@@ -1,6 +1,6 @@
 [project]
 name = "meetwit-sidecar"
-version = "0.0.1"
+version = "1.0.0"
 description = "Meetwit Python sidecar — FastAPI backend for storage, RAG, and LLM orchestration."
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
