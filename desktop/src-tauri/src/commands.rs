@@ -1004,6 +1004,98 @@ end run"#;
     Ok(Some(path))
 }
 
+// ─── BYOK API keys (macOS Keychain) ──────────────────────────────────────
+//
+// Cloud-LLM API keys are stored in the macOS Keychain — never in localStorage,
+// SQLite, or any file. Keyed by provider under a single service name. The key
+// only leaves the machine when the user's own request goes to that provider.
+
+/// Keychain service for BYOK provider API keys.
+const APIKEY_KEYCHAIN_SERVICE: &str = "meetwit.apikey";
+
+/// Allowlist of providers we'll store a key for — prevents an arbitrary
+/// `provider` string from creating junk Keychain entries.
+fn is_known_provider(provider: &str) -> bool {
+    matches!(provider, "openai" | "anthropic" | "groq" | "openrouter" | "custom")
+}
+
+#[tauri::command]
+pub fn apikey_set(state: State<'_, AppState>, provider: String, key: String) -> Result<(), String> {
+    if !is_known_provider(&provider) {
+        return Err(format!("unknown provider: {provider}"));
+    }
+    let key = key.trim();
+    if key.is_empty() {
+        // Empty = clear it, rather than storing a blank secret.
+        return state
+            .token_store()
+            .delete(APIKEY_KEYCHAIN_SERVICE, &provider)
+            .map_err(|e| e.to_string());
+    }
+    state
+        .token_store()
+        .save(APIKEY_KEYCHAIN_SERVICE, &provider, key)
+        .map_err(|e| e.to_string())
+}
+
+/// Returns whether a key is stored, plus a masked preview for the UI — never
+/// the full secret. The full key is read server-side only when a request is
+/// actually made (see `apikey_get`).
+#[derive(Debug, Serialize)]
+pub struct ApiKeyStatus {
+    pub present: bool,
+    pub masked: Option<String>,
+}
+
+#[tauri::command]
+pub fn apikey_status(state: State<'_, AppState>, provider: String) -> Result<ApiKeyStatus, String> {
+    if !is_known_provider(&provider) {
+        return Err(format!("unknown provider: {provider}"));
+    }
+    let stored = state
+        .token_store()
+        .load(APIKEY_KEYCHAIN_SERVICE, &provider)
+        .map_err(|e| e.to_string())?;
+    let masked = stored.as_deref().map(mask_key);
+    Ok(ApiKeyStatus {
+        present: stored.is_some(),
+        masked,
+    })
+}
+
+#[tauri::command]
+pub fn apikey_get(state: State<'_, AppState>, provider: String) -> Result<Option<String>, String> {
+    if !is_known_provider(&provider) {
+        return Err(format!("unknown provider: {provider}"));
+    }
+    state
+        .token_store()
+        .load(APIKEY_KEYCHAIN_SERVICE, &provider)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn apikey_delete(state: State<'_, AppState>, provider: String) -> Result<(), String> {
+    if !is_known_provider(&provider) {
+        return Err(format!("unknown provider: {provider}"));
+    }
+    state
+        .token_store()
+        .delete(APIKEY_KEYCHAIN_SERVICE, &provider)
+        .map_err(|e| e.to_string())
+}
+
+/// Mask a secret for display: keep the leading prefix + last 4, redact the rest.
+fn mask_key(key: &str) -> String {
+    let n = key.chars().count();
+    if n <= 8 {
+        return "•".repeat(n.max(1));
+    }
+    let head: String = key.chars().take(3).collect();
+    let tail: String = key.chars().skip(n - 4).collect();
+    format!("{head}…{tail}")
+}
+
 /// Open a macOS System Settings pane (used for permission deep-links).
 #[tauri::command]
 pub fn open_system_settings(pane: String) -> Result<(), String> {

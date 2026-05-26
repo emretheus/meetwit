@@ -290,3 +290,31 @@ export async function onMeetingDetected(
 ): Promise<UnlistenFn> {
   return listen<MeetingDetected>('meeting-detected', (e) => handler(e.payload));
 }
+
+// ─── BYOK API keys (macOS Keychain) ──────────────────────────────────────
+
+export interface ApiKeyStatus {
+  present: boolean;
+  /** Masked preview for the UI (e.g. "sk-…ab12"); never the full key. */
+  masked: string | null;
+}
+
+/** Store (or, with an empty key, clear) a provider API key in the Keychain. */
+export async function apikeySet(provider: string, key: string): Promise<void> {
+  return invoke<void>('apikey_set', { provider, key });
+}
+
+/** Whether a key is stored + a masked preview. Does NOT return the full key. */
+export async function apikeyStatus(provider: string): Promise<ApiKeyStatus> {
+  return invoke<ApiKeyStatus>('apikey_status', { provider });
+}
+
+/** Read the full key (used only to attach to an outgoing LLM request). */
+export async function apikeyGet(provider: string): Promise<string | null> {
+  return invoke<string | null>('apikey_get', { provider });
+}
+
+/** Delete a stored provider API key. */
+export async function apikeyDelete(provider: string): Promise<void> {
+  return invoke<void>('apikey_delete', { provider });
+}
