@@ -422,11 +422,11 @@ export interface LlmRequestConfig {
  * Build the LLM request config from Settings, read at CALL TIME (not module
  * load) so toggling Settings takes effect without a reload.
  *
- * For cloud providers the API key is read from `meetwit:apikey:<provider>`.
- * Keys never persist server-side — they ride each request and the backend
- * falls back to local Ollama if a cloud key is missing.
+ * For cloud providers the API key is read from the **macOS Keychain** (via the
+ * Rust core), never localStorage/SQLite/files. Keys never persist server-side —
+ * they ride each request and the backend falls back to local Ollama if missing.
  */
-export function llmRequestConfig(): LlmRequestConfig {
+export async function llmRequestConfig(): Promise<LlmRequestConfig> {
   let provider = 'ollama';
   let model = 'gemma3:1b';
   try {
@@ -441,7 +441,12 @@ export function llmRequestConfig(): LlmRequestConfig {
   }
   let apiKey: string | null = null;
   if (provider !== 'ollama') {
-    apiKey = localStorage.getItem(`meetwit:apikey:${provider}`);
+    try {
+      const { apikeyGet } = await import('@/lib/tauri');
+      apiKey = await apikeyGet(provider);
+    } catch {
+      apiKey = null; // no key → backend falls back to Ollama
+    }
   }
   return { provider, model, api_key: apiKey, base_url: null };
 }
@@ -457,7 +462,7 @@ export async function triggerPostMeeting(
     language?: string;
   } = {},
 ): Promise<{ process_id: string }> {
-  const cfg = llmRequestConfig();
+  const cfg = await llmRequestConfig();
   return jsonFetch<{ process_id: string }>(`/post-meeting/${meetingId}/process`, {
     method: 'POST',
     body: JSON.stringify({
@@ -476,10 +481,11 @@ export async function triggerConflictDetection(
   meetingId: string,
   body: { model?: string; confidence_threshold?: number } = {},
 ): Promise<{ process_id: string }> {
+  const model = body.model ?? (await llmRequestConfig()).model;
   return jsonFetch<{ process_id: string }>(`/conflicts/${meetingId}/detect`, {
     method: 'POST',
     body: JSON.stringify({
-      model: body.model ?? llmRequestConfig().model,
+      model,
       confidence_threshold: body.confidence_threshold ?? 0.8,
     }),
   });
@@ -610,7 +616,7 @@ export async function askMemory(
   body: { question: string; model?: string; top_k?: number },
   handlers: SseHandlers,
 ): Promise<void> {
-  const cfg = llmRequestConfig();
+  const cfg = await llmRequestConfig();
   return streamSse(
     '/memory/ask',
     {
@@ -669,7 +675,7 @@ export async function liveAsk(
   },
   handlers: SseHandlers,
 ): Promise<void> {
-  const cfg = llmRequestConfig();
+  const cfg = await llmRequestConfig();
   return streamSse(
     '/live/ask',
     {

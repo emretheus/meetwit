@@ -16,6 +16,9 @@ import {
 } from 'lucide-react';
 import { listCalendarAccounts, llmStatus, type LlmStatus } from '@/lib/backend';
 import {
+  apikeyDelete,
+  apikeySet,
+  apikeyStatus,
   asrModels,
   audioInputDevices,
   backendStatus,
@@ -1059,6 +1062,27 @@ function RemoteProviderForm({
 }) {
   const [apiKey, setApiKey] = useState('');
   const [show, setShow] = useState(false);
+  const [stored, setStored] = useState<{ present: boolean; masked: string | null }>({
+    present: false,
+    masked: null,
+  });
+  const [saving, setSaving] = useState(false);
+
+  // Load whether a key is already stored (Keychain) for this provider.
+  useEffect(() => {
+    let cancelled = false;
+    setApiKey('');
+    void apikeyStatus(provider)
+      .then((s) => {
+        if (!cancelled) setStored(s);
+      })
+      .catch(() => {
+        if (!cancelled) setStored({ present: false, masked: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [provider]);
 
   const variants: Record<typeof provider, string[]> = {
     ollama: [],
@@ -1068,6 +1092,43 @@ function RemoteProviderForm({
     openrouter: ['anthropic/claude-sonnet-4-6', 'openai/gpt-4o', 'google/gemini-2.5-pro'],
   };
   const list = variants[provider] ?? [];
+
+  async function save() {
+    setSaving(true);
+    try {
+      await apikeySet(provider, apiKey);
+      const s = await apikeyStatus(provider);
+      setStored(s);
+      setApiKey('');
+      toast({
+        title: 'API key saved',
+        description: 'Stored in your macOS Keychain.',
+        tone: 'success',
+      });
+    } catch (err) {
+      toast({
+        title: "Couldn't save key",
+        description: err instanceof Error ? err.message : String(err),
+        tone: 'error',
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove() {
+    try {
+      await apikeyDelete(provider);
+      setStored({ present: false, masked: null });
+      toast({ title: 'API key removed', tone: 'success' });
+    } catch (err) {
+      toast({
+        title: "Couldn't remove key",
+        description: err instanceof Error ? err.message : String(err),
+        tone: 'error',
+      });
+    }
+  }
 
   return (
     <div className="mt-4 space-y-3">
@@ -1089,7 +1150,7 @@ function RemoteProviderForm({
               type={show ? 'text' : 'password'}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-…"
+              placeholder={stored.present ? (stored.masked ?? 'key stored') : 'sk-…'}
               className="shadow-xs focus:border-brand-400 focus:ring-brand-100 flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[13px] text-zinc-800 focus:outline-none focus:ring-2"
             />
             <button
@@ -1100,22 +1161,26 @@ function RemoteProviderForm({
               {show ? 'Hide' : 'Show'}
             </button>
           </div>
+          {stored.present && (
+            <p className="mt-1 text-[11px] text-emerald-700">
+              Stored in Keychain ({stored.masked}).{' '}
+              <button
+                type="button"
+                onClick={() => void remove()}
+                className="underline hover:text-emerald-800"
+              >
+                Remove
+              </button>
+            </p>
+          )}
         </div>
       </div>
-      <div className="rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 text-[11.5px] text-amber-900">
-        Keys stay on this Mac and ride each request directly to the provider — never to our servers.
-        Heads-up: they&apos;re currently stored unencrypted in local app storage; encrypted macOS
-        Keychain storage is coming next.
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 px-3 py-2 text-[11.5px] text-emerald-900">
+        Keys are stored in your <strong>macOS Keychain</strong> — never in app files or our servers
+        — and ride each request directly to the provider you chose.
       </div>
       <div className="flex justify-end">
-        <Button
-          size="sm"
-          onClick={() => {
-            localStorage.setItem(`meetwit:apikey:${provider}`, apiKey);
-            toast({ title: 'API key saved', tone: 'success' });
-          }}
-          disabled={!apiKey.trim()}
-        >
+        <Button size="sm" loading={saving} onClick={() => void save()} disabled={!apiKey.trim()}>
           Save
         </Button>
       </div>

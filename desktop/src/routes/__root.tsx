@@ -1,5 +1,10 @@
 import { useEffect } from 'react';
-import { Outlet, createRootRouteWithContext, useLocation, useNavigate } from '@tanstack/react-router';
+import {
+  Outlet,
+  createRootRouteWithContext,
+  useLocation,
+  useNavigate,
+} from '@tanstack/react-router';
 import type { QueryClient } from '@tanstack/react-query';
 import { SideNav } from '@/components/SideNav';
 import { RecordingPill } from '@/components/RecordingPill';
@@ -7,6 +12,7 @@ import { ToastStack } from '@/components/ToastStack';
 import { SessionRecovery } from '@/components/SessionRecovery';
 import { MeetingNudge } from '@/components/MeetingNudge';
 import {
+  apikeySet,
   detectionSetCalendarNudge,
   detectionSetEnabled,
   onTranscriptUpdate,
@@ -27,11 +33,37 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 
 const ONBOARDED_KEY = 'meetwit:onboarded';
 
+/**
+ * One-time migration: earlier builds stored BYOK API keys in localStorage as
+ * `meetwit:apikey:<provider>` (plaintext). Move any survivors into the macOS
+ * Keychain and delete the localStorage copy, so no key is left in the clear.
+ */
+async function migrateApiKeysToKeychain(): Promise<void> {
+  const providers = ['openai', 'anthropic', 'groq', 'openrouter', 'custom'];
+  for (const provider of providers) {
+    const legacyKey = `meetwit:apikey:${provider}`;
+    const value = localStorage.getItem(legacyKey);
+    if (!value) continue;
+    try {
+      await apikeySet(provider, value);
+      localStorage.removeItem(legacyKey); // only purge after a successful move
+    } catch {
+      /* leave it; we'll retry next launch */
+    }
+  }
+}
+
 function RootLayout() {
   useInsightsWatcher();
   const navigate = useNavigate();
   const location = useLocation();
   const { ready: backendReady } = useBackendReady();
+
+  // Migrate legacy plaintext API keys → Keychain, once the backend is up.
+  useEffect(() => {
+    if (!backendReady) return;
+    void migrateApiKeysToKeychain();
+  }, [backendReady]);
 
   // First-run gate. The `meetwit:onboarded` flag is the source of truth:
   //   - Missing  → send the user to /onboarding (fresh install OR explicit
