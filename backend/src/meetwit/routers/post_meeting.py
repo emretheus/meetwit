@@ -112,7 +112,7 @@ async def trigger_process(
     processes.set_state(pid, progress)
 
     base_cfg = LlmConfig(
-        provider=body.provider,  # type: ignore[arg-type]
+        provider=body.provider,
         model=body.model,
         api_key=body.api_key,
         base_url=body.base_url,

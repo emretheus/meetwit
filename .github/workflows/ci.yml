@@ -34,6 +34,14 @@ jobs:
         with:
           workspaces: "./ -> target"
 
+      # tauri::generate_context! reads `frontendDist` ("../dist") at compile
+      # time and panics if it's missing. The Rust checks don't need the real
+      # frontend, so a stub dist/ is enough to satisfy codegen.
+      - name: Stub frontend dist (for tauri codegen)
+        run: |
+          mkdir -p desktop/dist
+          echo '<!doctype html><title>stub</title>' > desktop/dist/index.html
+
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
