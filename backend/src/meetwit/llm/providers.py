@@ -36,7 +36,12 @@ log = structlog.get_logger()
 
 # Cloud instance-metadata hostnames — block by name too (the IP block below
 # catches them by address, this catches the bare alias before DNS resolution).
-_BLOCKED_METADATA_HOSTS = {"169.254.169.254", "metadata.google.internal", "metadata", "100.100.100.100"}
+_BLOCKED_METADATA_HOSTS = {
+    "169.254.169.254",
+    "metadata.google.internal",
+    "metadata",
+    "100.100.100.100",
+}
 
 # Read-timeout for streaming/non-streaming LLM calls. A hostile or stalled
 # upstream (esp. a `custom` base_url) must not hold a connection open forever.
@@ -86,6 +91,7 @@ def _validate_base_url(raw: str) -> str:
         if _is_blocked_ip(ip):
             raise ValueError("base_url resolves to a blocked metadata/link-local address")
     return raw.rstrip("/")
+
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -323,7 +329,7 @@ def _strip_code_fence(text: str) -> str:
     if t.startswith("```"):
         t = t.split("\n", 1)[-1] if "\n" in t else t
         if t.endswith("```"):
-            t = t[: -3]
+            t = t[:-3]
         # Drop a leading "json" hint line.
         if t.lstrip().lower().startswith("json"):
             t = t.lstrip()[4:]

@@ -87,15 +87,13 @@ def language_instruction(code: str | None) -> str:
         f"another language."
     )
 
+
 TEMPLATES: dict[str, SummaryTemplate] = {
     "default": SummaryTemplate(
         id="default",
         name="Default",
         description="Overview + key points + recommended next steps.",
-        system=(
-            "You are an assistant that writes concise meeting summaries.\n"
-            f"{_BASE_FORMAT}"
-        ),
+        system=(f"You are an assistant that writes concise meeting summaries.\n{_BASE_FORMAT}"),
     ),
     "standup": SummaryTemplate(
         id="standup",

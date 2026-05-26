@@ -80,9 +80,12 @@ impl SpawnOptions {
 /// the collision odds are negligible — and this is strictly safer than a fixed
 /// port that a stale process can squat.
 fn pick_free_port() -> Result<u16> {
-    let listener = std::net::TcpListener::bind((HOST, 0))
-        .context("binding to an ephemeral port")?;
-    let port = listener.local_addr().context("reading assigned port")?.port();
+    let listener =
+        std::net::TcpListener::bind((HOST, 0)).context("binding to an ephemeral port")?;
+    let port = listener
+        .local_addr()
+        .context("reading assigned port")?
+        .port();
     Ok(port)
 }
 

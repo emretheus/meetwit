@@ -1016,7 +1016,10 @@ const APIKEY_KEYCHAIN_SERVICE: &str = "meetwit.apikey";
 /// Allowlist of providers we'll store a key for — prevents an arbitrary
 /// `provider` string from creating junk Keychain entries.
 fn is_known_provider(provider: &str) -> bool {
-    matches!(provider, "openai" | "anthropic" | "groq" | "openrouter" | "custom")
+    matches!(
+        provider,
+        "openai" | "anthropic" | "groq" | "openrouter" | "custom"
+    )
 }
 
 #[tauri::command]
