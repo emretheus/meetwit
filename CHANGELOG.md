@@ -22,6 +22,8 @@ macOS (Apple Silicon). Signed + notarized DMG via GitHub Releases.
 - Transcript export to plain text, WebVTT, SRT, and JSON (alongside Markdown/PDF)
 
 ### Changed
+- BYOK cloud API keys are now stored in the **macOS Keychain** (was plaintext
+  localStorage); legacy keys are migrated and purged on first launch
 - Sidecar binds an OS-assigned free port (was fixed 5167) so a stale or second
   instance can't cause a hung startup or a wrong-backend attach
 - Removed the non-functional analytics toggle; settings now state the
