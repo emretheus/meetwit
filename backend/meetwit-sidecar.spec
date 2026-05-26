@@ -61,7 +61,21 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Dev-only tooling that leaks in from the dev venv. It must NOT ship: its
+    # native .so files (e.g. mypy's compiled modules) are unsigned and fail
+    # notarization, and it's dead weight at runtime.
+    excludes=[
+        "mypy",
+        "mypyc",
+        "pytest",
+        "_pytest",
+        "ruff",
+        "pyinstaller",
+        "PyInstaller",
+        "pip",
+        "setuptools",
+        "wheel",
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

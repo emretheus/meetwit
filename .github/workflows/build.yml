@@ -115,6 +115,29 @@ jobs:
           rm -rf desktop/src-tauri/binaries/python-backend
           cp -R backend/dist/meetwit-sidecar desktop/src-tauri/binaries/python-backend
 
+      # Notarization requires EVERY nested Mach-O to be signed with the
+      # Developer ID, hardened runtime, and a secure timestamp. Tauri signs the
+      # outer .app but not the PyInstaller binaries inside python-backend/, so
+      # deep-sign them here first (inside-out). Signing before the Tauri build
+      # means the outer signature wraps already-valid innards.
+      - name: Deep-sign bundled sidecar binaries
+        if: ${{ env.DO_SIGN == 'true' }}
+        run: |
+          set -euo pipefail
+          DIR="desktop/src-tauri/binaries/python-backend"
+          ENT="desktop/src-tauri/entitlements.plist"
+          # Every Mach-O: PyInstaller's .so/.dylib plus the launcher executable.
+          # `file` is more reliable than extension matching for nested binaries.
+          find "$DIR" -type f | while read -r f; do
+            if file "$f" | grep -q "Mach-O"; then
+              codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
+                --options runtime --timestamp \
+                --entitlements "$ENT" "$f"
+            fi
+          done
+          echo "Deep-sign complete. Verifying a sample:"
+          codesign -dv --verbose=2 "$DIR/meetwit-sidecar" 2>&1 | head -5
+
       - name: Build Tauri .app + .dmg
         # When DO_SIGN is false, blank the identity so Tauri builds unsigned
         # rather than erroring on a missing cert.
