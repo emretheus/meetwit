@@ -1,0 +1,125 @@
+# ─── macOS ───────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+# (no bare `Icon?` rule — it would match icon.png. Use the carriage-return form for Finder's custom-icon resource forks if ever needed.)
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# ─── Rust / Cargo ────────────────────────────────────────────────────────
+target/
+**/*.rs.bk
+Cargo.lock.bak
+*.pdb
+
+# ─── Node / pnpm ─────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npmrc.local
+dist/
+dist-ssr/
+.cache/
+.parcel-cache/
+.vite/
+.turbo/
+
+# ─── Python / uv ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+# Python build artifacts — anchor to repo root so they don't match desktop/src/lib/.
+/lib/
+/lib64/
+/backend/lib/
+/backend/lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+.python-version.local
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# ─── Tauri ───────────────────────────────────────────────────────────────
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/binaries/python-backend/*
+!desktop/src-tauri/binaries/python-backend/.gitkeep
+desktop/src-tauri/WixTools/
+
+# ─── Generated routes (TanStack Router) ──────────────────────────────────
+# Committed on purpose: the Vite plugin only regenerates it during dev/build,
+# so `tsc --noEmit` (which CI runs before build) needs it to already exist.
+# Tracking it keeps typecheck deterministic. Regenerated automatically on build.
+
+# ─── App runtime data (created by Meetwit at run time) ───────────────────
+# These live in ~/Library/Application Support/Meetwit/, not in the repo —
+# but if a developer copies one in, exclude it. Anchored to avoid matching
+# desktop/src-tauri/src/audio/ etc.
+/models/
+/backend/models/
+/audio/
+/backend/audio/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# ─── IDEs ────────────────────────────────────────────────────────────────
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# ─── Local env / secrets ─────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+
+# ─── Logs ────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Plan / scratch ──────────────────────────────────────────────────────
+scratch/
+.tmp/
+
+# ─── Internal docs (kept out of the public repo) ─────────────────────────
+# Design notes, competitive analysis, weekly status, and indexing fixtures
+# live locally but are not part of the public project.
+/docs/
+/sample-docs/

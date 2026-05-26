@@ -1,0 +1,287 @@
+@import 'tailwindcss';
+
+/* ─── Design tokens ──────────────────────────────────────────────────
+   A small, deliberate palette. Modeled after Linear / Vercel / Stripe.
+
+   Naming:
+     bg / surface / elevated / overlay  — 4-step surface ladder
+     text / text-muted / text-dim       — readability hierarchy
+     border / border-strong             — divider strengths
+     brand-*                            — indigo primary action
+     sidebar-*                          — dark left rail tokens
+     recording                          — single accent for active record
+*/
+@theme {
+  /* Surfaces — light side */
+  --color-bg: #ffffff;
+  --color-surface: #f9fafb;        /* page background */
+  --color-elevated: #ffffff;        /* card */
+  --color-overlay: #fafafa;         /* nested / hovered area */
+
+  /* Borders */
+  --color-border: #e5e7eb;          /* default divider */
+  --color-border-strong: #d1d5db;   /* emphasized */
+  --color-border-soft: #f1f5f9;     /* whisper-thin divider */
+
+  /* Text hierarchy */
+  --color-text: #0f172a;            /* primary, near-black */
+  --color-text-muted: #475569;      /* body secondary */
+  --color-text-dim: #94a3b8;        /* labels, captions */
+  --color-text-disabled: #cbd5e1;
+
+  /* Brand — deep, saturated trust blue. */
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;       /* primary action */
+  --color-brand-700: #1d4ed8;
+  --color-brand-800: #1e40af;
+
+  /* Sidebar — near-white with a hint of warmth. Light-on-light, subtle
+     borders. Reads as "notes app", not "dev tool". */
+  --color-sidebar-bg: #f6f6f7;
+  --color-sidebar-surface: #ffffff;
+  --color-sidebar-text: #18181b;
+  --color-sidebar-text-mid: #52525b;
+  --color-sidebar-text-dim: #71717a;
+  --color-sidebar-hover: #ececee;
+  --color-sidebar-active: #ffffff;
+  --color-sidebar-border: #e4e4e7;
+
+  /* Recording — warm orange accent. Pairs with teal. */
+  --color-recording: #f97316;
+  --color-recording-bg: #fff7ed;
+  --color-recording-ring: rgba(249, 115, 22, 0.18);
+
+  /* Semantic accents */
+  --color-success: #10b981;
+  --color-success-50: #ecfdf5;
+  --color-warning: #f59e0b;
+  --color-warning-50: #fffbeb;
+  --color-danger: #ef4444;
+  --color-danger-50: #fef2f2;
+  --color-info: #0ea5e9;
+  --color-info-50: #f0f9ff;
+
+  /* Typography */
+  --font-display:
+    'Inter', -apple-system, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+  --font-mono:
+    'JetBrains Mono', 'SF Mono', ui-monospace, 'Menlo', monospace;
+
+  /* Spacing rhythm (use Tailwind defaults but pin our cadence: 4/6/8/12/16/20/24) */
+
+  /* Elevation ladder */
+  --shadow-xs: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+  --shadow-sm: 0 1px 3px 0 rgb(15 23 42 / 0.06), 0 1px 2px -1px rgb(15 23 42 / 0.04);
+  --shadow-md: 0 4px 12px -4px rgb(15 23 42 / 0.10), 0 2px 4px -2px rgb(15 23 42 / 0.04);
+  --shadow-lg: 0 10px 30px -10px rgb(15 23 42 / 0.18), 0 4px 8px -2px rgb(15 23 42 / 0.06);
+
+  /* Radii ladder — keep consistent corners */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+}
+
+/* ─── Base ───────────────────────────────────────────────────────── */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-display);
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* Sharper, more controlled focus rings everywhere */
+*:focus-visible {
+  outline: none;
+}
+
+/* Interactive elements get the pointer cursor (Tailwind 4 no longer sets it
+   by default). Disabled controls keep the not-allowed cursor. */
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']),
+a {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  background-color: var(--color-brand-200);
+  color: var(--color-brand-800);
+}
+
+/* ─── Native control normalization ───────────────────────────────
+   macOS WKWebView gives `<select>` an inset shadow + double-arrow that
+   bleeds through Tailwind classes. Reset at the element level so every
+   select gets our designed look. */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: none;
+  box-shadow: none;
+}
+select::-ms-expand {
+  display: none;
+}
+
+/* ─── Scrollbars — slim, themed ─────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-border-strong);
+}
+
+/* ─── Recording pulse ───────────────────────────────────────────── */
+@keyframes recording-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(0.85); }
+}
+.recording-dot {
+  animation: recording-pulse 1.4s ease-in-out infinite;
+}
+
+/* ─── Subtle shimmer for streaming text indicator ───────────────── */
+@keyframes caret-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.streaming-caret {
+  animation: caret-blink 1s steps(1) infinite;
+}
+
+/* ─── TipTap prose — tight, editor-friendly typography ─────────── */
+.meetwit-prose h1 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #0f172a;
+  margin: 0.4em 0 0.3em;
+}
+.meetwit-prose h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f172a;
+  margin: 0.6em 0 0.25em;
+}
+.meetwit-prose h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  margin: 0.6em 0 0.2em;
+  text-transform: none;
+}
+.meetwit-prose p { margin: 0.35em 0; }
+.meetwit-prose ul, .meetwit-prose ol {
+  margin: 0.35em 0;
+  padding-left: 1.2em;
+}
+.meetwit-prose ul { list-style: disc; }
+.meetwit-prose ol { list-style: decimal; }
+.meetwit-prose ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.2em;
+}
+.meetwit-prose ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+  margin: 0.25em 0;
+}
+.meetwit-prose ul[data-type="taskList"] li > label {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 0.45em;
+  user-select: none;
+}
+.meetwit-prose ul[data-type="taskList"] li > label > input[type="checkbox"] {
+  accent-color: var(--color-brand-600);
+  width: 14px;
+  height: 14px;
+}
+.meetwit-prose ul[data-type="taskList"] li > div {
+  flex: 1;
+  min-width: 0;
+}
+.meetwit-prose ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: var(--color-text-dim);
+  text-decoration: line-through;
+}
+.meetwit-prose blockquote {
+  border-left: 2px solid var(--color-border);
+  padding-left: 0.9em;
+  color: var(--color-text-muted);
+  font-style: italic;
+  margin: 0.5em 0;
+}
+.meetwit-prose code {
+  background: var(--color-surface);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: #1e293b;
+}
+.meetwit-prose pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0.75em 0.9em;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  margin: 0.5em 0;
+}
+.meetwit-prose pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+.meetwit-prose strong { font-weight: 600; color: #0f172a; }
+.meetwit-prose em { font-style: italic; }
+/* Placeholder for empty document. */
+.meetwit-prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--color-text-dim);
+  pointer-events: none;
+  height: 0;
+}
+
+/* ─── Reduced motion respect ─────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,168 @@
+name: Release
+
+# Builds, signs, notarizes, and publishes the macOS .dmg.
+#
+# Triggers:
+#   - push a tag like `v1.0.0`  → full release: sign + notarize + GitHub Release
+#   - manual dispatch           → build artifact only (optionally sign+notarize)
+#
+# Required repo secrets for signing (Settings → Secrets and variables → Actions):
+#   APPLE_CERTIFICATE           base64 of your "Developer ID Application" .p12
+#                               (base64 -i cert.p12 | pbcopy)
+#   APPLE_CERTIFICATE_PASSWORD  the .p12 export password
+#   APPLE_SIGNING_IDENTITY      e.g. "Developer ID Application: Your Name (TEAMID)"
+#   APPLE_ID                    your Apple ID email
+#   APPLE_PASSWORD              an app-specific password (appleid.apple.com)
+#   APPLE_TEAM_ID               your 10-char Team ID
+#   KEYCHAIN_PASSWORD           any throwaway password for the temp CI keychain
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: "Code-sign + notarize the resulting .app + .dmg"
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: Build Meetwit.app (arm64)
+    runs-on: macos-14
+    timeout-minutes: 60
+    permissions:
+      contents: write # needed to create the GitHub Release on a tag
+
+    env:
+      # A tag push always signs; manual runs sign only when the input is set.
+      DO_SIGN: ${{ github.ref_type == 'tag' || inputs.sign }}
+      # Tauri reads these directly during `tauri build`.
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build deps (cmake for whisper.cpp)
+        run: brew install cmake
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        # Version comes from package.json "packageManager".
+        uses: pnpm/action-setup@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install Python toolchain
+        run: uv python install 3.13
+
+      - name: Install Python deps
+        working-directory: backend
+        run: uv sync --extra dev
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      # ── Import the Developer ID cert into a temporary keychain ───────────
+      # Without this, APPLE_SIGNING_IDENTITY has nothing to match and Tauri
+      # silently ships an UNSIGNED app. This is the step most setups miss.
+      - name: Import signing certificate
+        if: ${{ env.DO_SIGN == 'true' }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/app-signing.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          # Allow codesign to use the key without an interactive prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # Make the temp keychain the default search list (+ keep login).
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$CERT_PATH"
+          echo "Imported signing identities:"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      - name: Run sidecar build (PyInstaller --onedir)
+        working-directory: backend
+        run: uv run pyinstaller meetwit-sidecar.spec --noconfirm --clean
+
+      - name: Stage sidecar bundle
+        run: |
+          mkdir -p desktop/src-tauri/binaries
+          rm -rf desktop/src-tauri/binaries/python-backend
+          cp -R backend/dist/meetwit-sidecar desktop/src-tauri/binaries/python-backend
+
+      - name: Build Tauri .app + .dmg
+        # When DO_SIGN is false, blank the identity so Tauri builds unsigned
+        # rather than erroring on a missing cert.
+        run: |
+          if [ "$DO_SIGN" != "true" ]; then unset APPLE_SIGNING_IDENTITY; fi
+          pnpm tauri:build
+
+      - name: Notarize + staple
+        if: ${{ env.DO_SIGN == 'true' }}
+        run: |
+          set -euo pipefail
+          DMG=$(find desktop/src-tauri/target/release/bundle/dmg -name '*.dmg' | head -1)
+          echo "Notarizing $DMG"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+      - name: Checksum
+        run: |
+          set -euo pipefail
+          DMG=$(find desktop/src-tauri/target/release/bundle/dmg -name '*.dmg' | head -1)
+          shasum -a 256 "$DMG" | tee "$DMG.sha256"
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Meetwit-macos-arm64
+          path: |
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg.sha256
+          retention-days: 14
+
+      # ── Publish a GitHub Release on a tag ────────────────────────────────
+      - name: Publish GitHub Release
+        if: ${{ github.ref_type == 'tag' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg.sha256
+          draft: true
+          generate_release_notes: true
+          body: |
+            Signed + notarized macOS build (Apple Silicon).
+
+            **Install:** download the `.dmg`, open it, drag **Meetwit** to
+            Applications. Verify the download with the published SHA-256.
