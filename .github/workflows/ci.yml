@@ -51,10 +51,15 @@ jobs:
       - name: cargo test
         run: cargo test --workspace --all-targets
 
+      # EmbarkStudios/cargo-deny-action is a Docker container action and only
+      # runs on Linux — this job is on macos-14. Install the prebuilt binary
+      # (no compile) and run it natively instead.
       - name: Install cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@v2
+        uses: taiki-e/install-action@v2
         with:
-          command: check
+          tool: cargo-deny
+      - name: cargo deny check
+        run: cargo deny check
 
   python:
     name: Python — ruff, mypy, pytest
