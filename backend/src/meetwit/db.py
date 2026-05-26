@@ -9,6 +9,7 @@ there's no cross-thread bridging to worry about.
 from __future__ import annotations
 
 import sqlite3
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,10 +28,24 @@ from meetwit.sqlite_vec_loader import load_into_connection, vec0_loadable_path
 
 
 def _alembic_config(db_path: Path) -> AlembicConfig:
-    """Build an Alembic config pointing at our migrations + the live DB."""
-    backend_root = Path(__file__).resolve().parents[2]  # backend/
-    cfg = AlembicConfig(str(backend_root / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_root / "src" / "meetwit" / "migrations"))
+    """Build an Alembic config pointing at our migrations + the live DB.
+
+    Two layouts: running from source (``backend/src/meetwit/...``) vs. frozen
+    in a PyInstaller bundle, where the spec stages ``alembic.ini`` at the
+    bundle root and migrations at ``meetwit/migrations`` (no ``src/``).
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if getattr(sys, "frozen", False) and meipass:
+        bundle_root = Path(meipass)
+        ini_path = bundle_root / "alembic.ini"
+        script_location = bundle_root / "meetwit" / "migrations"
+    else:
+        backend_root = Path(__file__).resolve().parents[2]  # backend/
+        ini_path = backend_root / "alembic.ini"
+        script_location = backend_root / "src" / "meetwit" / "migrations"
+
+    cfg = AlembicConfig(str(ini_path))
+    cfg.set_main_option("script_location", str(script_location))
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     return cfg
 

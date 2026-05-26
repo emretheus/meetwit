@@ -13,7 +13,14 @@ import os
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_submodules
+
 block_cipher = None
+
+# uvicorn loads the app by STRING ("meetwit.main:app") at runtime, which
+# PyInstaller's static analysis can't follow. Collect the whole package so
+# every module (main, routers, services, …) is bundled and importable.
+meetwit_submodules = collect_submodules("meetwit")
 
 backend_root = Path(SPECPATH).resolve()  # noqa: F821  (SPECPATH is injected by PyInstaller)
 src_root = backend_root / "src"
@@ -47,6 +54,9 @@ a = Analysis(
     binaries=[],
     datas=sqlite_vec_datas + alembic_datas,
     hiddenimports=[
+        # The whole meetwit package — uvicorn imports "meetwit.main:app" by
+        # string, so static analysis misses it without this.
+        *meetwit_submodules,
         "sqlite_vec",
         "aiosqlite",
         "uvicorn.logging",
@@ -65,16 +75,14 @@ a = Analysis(
     # native .so files (e.g. mypy's compiled modules) are unsigned and fail
     # notarization, and it's dead weight at runtime.
     excludes=[
+        # Dev-only tooling whose compiled .so files fail notarization and which
+        # is never imported at runtime. (Keep pip/setuptools/wheel — import
+        # machinery and some deps reach for them.)
         "mypy",
         "mypyc",
         "pytest",
         "_pytest",
         "ruff",
-        "pyinstaller",
-        "PyInstaller",
-        "pip",
-        "setuptools",
-        "wheel",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
