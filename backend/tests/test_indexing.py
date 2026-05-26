@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from meetwit.indexing import chunk_text, parse_file
+from meetwit.indexing import Embedder, chunk_text, parse_file
 from meetwit.indexing.chunker import _split_into_sentences
 
 
@@ -91,14 +91,13 @@ def test_parse_txt(tmp_path: Path) -> None:
     assert "Hello world" in sections[0].text
 
 
-def test_indexer_end_to_end(fresh_db: Path, tmp_path: Path) -> None:
+def test_indexer_end_to_end(fresh_db: Path, tmp_path: Path, shared_embedder: Embedder) -> None:
     """Real indexing run on a small markdown file — verifies DB + vec table populated."""
     import asyncio
 
     from sqlalchemy import text
 
     from meetwit.db import make_engine
-    from meetwit.indexing import Embedder
     from meetwit.services.indexer import IndexProgress, index_folder
 
     docs = tmp_path / "docs"
@@ -116,10 +115,9 @@ The policy applies to all SKUs in the catalog.
 
     engine = make_engine(fresh_db)
 
-    embedder = Embedder()
     progress = IndexProgress()
 
-    asyncio.run(index_folder(docs, engine, embedder, progress))
+    asyncio.run(index_folder(docs, engine, shared_embedder, progress))
 
     assert progress.finished
     assert progress.error is None

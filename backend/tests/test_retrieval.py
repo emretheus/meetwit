@@ -36,7 +36,7 @@ def _alembic_upgrade(db_path: Path) -> None:
 
 
 @pytest.fixture(scope="module")
-def shared_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def shared_db(tmp_path_factory: pytest.TempPathFactory, shared_embedder: Embedder) -> Path:
     """One DB, one indexing run, shared across the retrieval tests."""
     tmp = tmp_path_factory.mktemp("retr")
     db_path = tmp / "test.sqlite"
@@ -66,18 +66,18 @@ The CFO must approve any discount above 15 percent.
     )
 
     engine = make_engine(db_path)
-    embedder = Embedder()
     progress = IndexProgress()
-    asyncio.run(index_folder(docs, engine, embedder, progress))
+    asyncio.run(index_folder(docs, engine, shared_embedder, progress))
     asyncio.run(engine.dispose())
     assert progress.indexed_files == 3
     return db_path
 
 
-def test_hybrid_retriever_returns_relevant_chunk(shared_db: Path) -> None:
+def test_hybrid_retriever_returns_relevant_chunk(
+    shared_db: Path, shared_embedder: Embedder
+) -> None:
     engine = make_engine(shared_db)
-    embedder = Embedder()
-    retriever = HybridRetriever(engine, embedder)
+    retriever = HybridRetriever(engine, shared_embedder)
 
     async def _go() -> None:
         results = await retriever.search("what is the maximum discount?", top_k=3)
@@ -92,10 +92,9 @@ def test_hybrid_retriever_returns_relevant_chunk(shared_db: Path) -> None:
     asyncio.run(_go())
 
 
-def test_hybrid_retriever_empty_query(shared_db: Path) -> None:
+def test_hybrid_retriever_empty_query(shared_db: Path, shared_embedder: Embedder) -> None:
     engine = make_engine(shared_db)
-    embedder = Embedder()
-    retriever = HybridRetriever(engine, embedder)
+    retriever = HybridRetriever(engine, shared_embedder)
 
     async def _go() -> None:
         results = await retriever.search("", top_k=3)

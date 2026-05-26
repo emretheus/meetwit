@@ -78,6 +78,16 @@ jobs:
       - name: Install Python toolchain
         run: uv python install 3.13
 
+      # Cache the downloaded sentence-transformer (BGE-M3, ~2.3 GB). Without
+      # this, the retrieval/indexing tests re-download it every run — the
+      # single biggest chunk of CI time. Keyed by model name so a model swap
+      # busts the cache.
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: ${{ runner.os }}-hf-bge-m3
+
       - name: Sync dependencies (locked)
         run: uv sync --frozen --extra dev || uv sync --extra dev
 
