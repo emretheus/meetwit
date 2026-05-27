@@ -36,6 +36,7 @@ import {
 import { InsightsPanel } from '@/components/InsightsPanel';
 import { MeetingCopilot } from '@/components/MeetingCopilot';
 import { LiveNotesPanel } from '@/components/LiveNotesPanel';
+import { TerminalPanel } from '@/components/TerminalPanel';
 import { toast } from '@/components/ToastStack';
 import { getPrefs } from '@/lib/prefs';
 import { formatTime, groupSegmentsIntoTurns } from '@/lib/transcript';
@@ -74,7 +75,9 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [showCompliance, setShowCompliance] = useState(false);
-  const [rightTab, setRightTab] = useState<'copilot' | 'notes'>('copilot');
+  const [rightTab, setRightTab] = useState<'copilot' | 'notes' | 'claude'>('copilot');
+  // Opt-in "Claude Code" tab (read once; Settings change takes effect on reopen).
+  const [claudeCodeEnabled] = useState(() => getPrefs().claudeCodeEnabled);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -377,30 +380,32 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
             lives on the note page; during recording these are the live value. */}
         <aside className="flex w-[440px] shrink-0 flex-col border-l border-zinc-200 bg-white">
           <div className="flex shrink-0 items-center gap-1 border-b border-zinc-200 px-3 py-1.5">
-            {(['copilot', 'notes'] as const).map((t) => (
+            {(
+              ['copilot', 'notes', ...(claudeCodeEnabled ? (['claude'] as const) : [])] as const
+            ).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setRightTab(t)}
                 className={[
-                  'rounded-md px-2.5 py-1 text-[12px] font-medium capitalize transition',
+                  'rounded-md px-2.5 py-1 text-[12px] font-medium transition',
                   rightTab === t
                     ? 'bg-brand-50 text-brand-700'
                     : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700',
                 ].join(' ')}
               >
-                {t === 'copilot' ? 'Copilot' : 'Notes'}
+                {t === 'copilot' ? 'Copilot' : t === 'notes' ? 'Notes' : 'Claude Code'}
               </button>
             ))}
           </div>
-          {rightTab === 'copilot' ? (
-            <MeetingCopilot meetingId={meeting?.id ?? null} withToolbar />
-          ) : (
+          {rightTab === 'copilot' && <MeetingCopilot meetingId={meeting?.id ?? null} withToolbar />}
+          {rightTab === 'notes' && (
             <LiveNotesPanel
               meetingId={meeting?.id ?? null}
               elapsedSeconds={elapsedMs !== null ? elapsedMs / 1000 : null}
             />
           )}
+          {rightTab === 'claude' && claudeCodeEnabled && <TerminalPanel autoClaude />}
         </aside>
       </div>
     </div>

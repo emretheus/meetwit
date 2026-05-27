@@ -22,6 +22,7 @@ import {
   asrModels,
   audioInputDevices,
   backendStatus,
+  claudeAvailable,
   detectionSetCalendarNudge,
   detectionSetEnabled,
   onCalendarConnected,
@@ -1266,7 +1267,70 @@ function BetaTab() {
           onChange={(v) => setBeta((b) => ({ ...b, crossMeetingConflicts: v }))}
         />
       </Section>
+
+      <ClaudeCodeSection />
     </>
+  );
+}
+
+/**
+ * Opt-in "Claude Code" tab: an embedded terminal that runs the user's own
+ * Claude Code (their subscription, no API key) with the Meetwit MCP server, so
+ * they can query a meeting's data from Claude. Off by default — it sends data to
+ * Anthropic via the user's Claude session, so we surface that clearly.
+ */
+function ClaudeCodeSection() {
+  const [enabled, setEnabled] = useState(() => getPrefs().claudeCodeEnabled);
+  const [installed, setInstalled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void claudeAvailable()
+      .then((ok) => alive && setInstalled(ok))
+      .catch(() => alive && setInstalled(false));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  function toggle(v: boolean) {
+    setEnabled(v);
+    savePrefs({ ...getPrefs(), claudeCodeEnabled: v });
+  }
+
+  return (
+    <Section
+      title="Claude Code"
+      description="Add a terminal tab during meetings that runs your own Claude Code — your Claude subscription, no API key — wired to a Meetwit MCP server so Claude can search this meeting's transcript, decisions, action items, and your indexed docs."
+    >
+      <ToggleRow
+        title="Enable the Claude Code tab"
+        description="Privacy note: unlike the rest of Meetwit, this sends meeting data to Anthropic — through your own Claude Code session. Off by default."
+        checked={enabled}
+        onChange={toggle}
+      />
+      <div className="mt-1 flex items-center gap-2 text-[12px]">
+        <span className="text-zinc-500">Status:</span>
+        {installed === null ? (
+          <span className="text-zinc-400">checking…</span>
+        ) : installed ? (
+          <span className="font-medium text-emerald-600">Claude Code detected</span>
+        ) : (
+          <span className="text-amber-600">
+            Not installed —{' '}
+            <a
+              href="https://docs.claude.com/claude-code"
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              install it
+            </a>{' '}
+            to use this tab.
+          </span>
+        )}
+      </div>
+    </Section>
   );
 }
 
