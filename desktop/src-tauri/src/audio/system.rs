@@ -279,9 +279,16 @@ mod imp {
     use super::super::wav::TARGET_SAMPLE_RATE;
     use super::{downmix_to_mono, rms_of};
 
-    /// Windows loopback is available whenever a default output device exists.
+    /// Resolve the WASAPI host explicitly (not `default_host`) so loopback is
+    /// always driven through WASAPI — matches Meetily. Falls back to the default
+    /// host if WASAPI can't be created (shouldn't happen on Windows).
+    fn wasapi_host() -> cpal::Host {
+        cpal::host_from_id(cpal::HostId::Wasapi).unwrap_or_else(|_| cpal::default_host())
+    }
+
+    /// Windows loopback is available whenever a default render device exists.
     pub fn sck_available() -> bool {
-        cpal::default_host().default_output_device().is_some()
+        wasapi_host().default_output_device().is_some()
     }
 
     pub struct SystemCapture {
@@ -297,10 +304,10 @@ mod imp {
 
     impl SystemCapture {
         pub fn start() -> Result<Self> {
-            let host = cpal::default_host();
+            let host = wasapi_host();
             let device = host
                 .default_output_device()
-                .context("no default output device for loopback capture")?;
+                .context("no default render device for loopback capture")?;
             let config = device
                 .default_output_config()
                 .context("query default output config")?;
