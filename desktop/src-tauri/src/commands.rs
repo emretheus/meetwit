@@ -946,62 +946,45 @@ pub fn save_export(
     default_name: String,
     open_after: bool,
 ) -> Result<Option<String>, String> {
-    // The default filename is passed to osascript as an `argv` parameter — NOT
-    // string-interpolated into the script source — so a meeting title can never
-    // inject AppleScript (it's just data referenced via `item 1 of argv`).
-    // `choose file name` returns an HFS path or errors (-128) on cancel.
-    let script = r#"on run argv
-    set f to choose file name with prompt "Export meeting note" default name (item 1 of argv)
-    return POSIX path of f
-end run"#;
-    let out = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .arg(&default_name)
-        .output()
-        .map_err(|e| format!("save dialog failed: {e}"))?;
-
-    if !out.status.success() {
-        // User cancelled (osascript exits non-zero on -128). Not an error.
+    // Native save dialog via `rfd` — cross-platform (macOS/Windows/Linux). The
+    // default filename is dialog data, not interpolated into any shell/script,
+    // so a meeting title can't inject anything. None == user cancelled.
+    let Some(path) = rfd::FileDialog::new()
+        .set_title("Export meeting note")
+        .set_file_name(&default_name)
+        .save_file()
+    else {
         return Ok(None);
-    }
-    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if path.is_empty() {
-        return Ok(None);
-    }
+    };
 
-    std::fs::write(&path, content.as_bytes()).map_err(|e| format!("write {path}: {e}"))?;
+    std::fs::write(&path, content.as_bytes())
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
 
     if open_after {
+        // Reveal/open the saved file in the OS default handler.
+        #[cfg(target_os = "macos")]
         let _ = std::process::Command::new("open").arg(&path).spawn();
+        #[cfg(target_os = "windows")]
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(&path)
+            .spawn();
+        #[cfg(target_os = "linux")]
+        let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
     }
-    Ok(Some(path))
+    Ok(Some(path.display().to_string()))
 }
 
 /// Show a native "choose file" dialog for picking an audio file to import
-/// (#336). Returns the POSIX path, or None if cancelled. Same osascript
-/// approach as `save_export` — no extra dependency, no webview file access.
+/// (#336). Returns the path, or None if cancelled. Cross-platform via `rfd`.
 #[tauri::command]
 pub fn pick_audio_file() -> Result<Option<String>, String> {
-    // `choose file of type {...}` limits the picker to WAV (the only format we
-    // can decode). Returns an HFS path, or errors (-128) on cancel.
-    let script = r#"on run
-    set f to choose file with prompt "Import audio file" of type {"wav", "com.microsoft.waveform-audio"}
-    return POSIX path of f
-end run"#;
-    let out = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|e| format!("open dialog failed: {e}"))?;
-    if !out.status.success() {
-        return Ok(None); // user cancelled
-    }
-    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if path.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(path))
+    // Limit the picker to WAV (the only format we can decode).
+    let picked = rfd::FileDialog::new()
+        .set_title("Import audio file")
+        .add_filter("WAV audio", &["wav"])
+        .pick_file();
+    Ok(picked.map(|p| p.display().to_string()))
 }
 
 // ─── BYOK API keys (macOS Keychain) ──────────────────────────────────────
@@ -1099,24 +1082,49 @@ fn mask_key(key: &str) -> String {
     format!("{head}…{tail}")
 }
 
-/// Open a macOS System Settings pane (used for permission deep-links).
+/// Open an OS settings pane (used for permission deep-links). Maps logical
+/// pane names to per-platform deep-link URLs.
 #[tauri::command]
 pub fn open_system_settings(pane: String) -> Result<(), String> {
-    let url = match pane.as_str() {
-        "microphone" => {
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
-        }
-        "screen-recording" => {
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
-        }
-        "privacy" => "x-apple.systempreferences:com.apple.preference.security?Privacy",
-        other => return Err(format!("unknown pane: {other}")),
-    };
-    std::process::Command::new("open")
-        .arg(url)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    #[cfg(target_os = "macos")]
+    {
+        let url = match pane.as_str() {
+            "microphone" => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+            }
+            "screen-recording" => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+            }
+            "privacy" => "x-apple.systempreferences:com.apple.preference.security?Privacy",
+            other => return Err(format!("unknown pane: {other}")),
+        };
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| e.to_string())
+            .map(|_| ())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Windows loopback needs no permission; map mic to its privacy page,
+        // everything else to the general privacy settings.
+        let url = match pane.as_str() {
+            "microphone" => "ms-settings:privacy-microphone",
+            _ => "ms-settings:privacy",
+        };
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn()
+            .map_err(|e| e.to_string())
+            .map(|_| ())
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = pane;
+        Ok(())
+    }
 }
 
 fn sanitize_filename(input: &str) -> String {

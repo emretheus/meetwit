@@ -169,19 +169,31 @@ fn spawn_detection(handle: tauri::AppHandle) {
 }
 
 /// Choose SpawnOptions based on whether the bundled PyInstaller binary
-/// exists. Release `.app` has it under Contents/Resources/python-backend/;
-/// dev mode falls back to `uv run python -m meetwit` from the workspace.
+/// exists. Release builds bundle it under a `python-backend/` resources dir
+/// (macOS: `Contents/Resources/`, Windows: alongside the exe); dev mode falls
+/// back to `uv run python -m meetwit` from the workspace.
 fn build_spawn_options() -> SpawnOptions {
     let exe = std::env::current_exe().ok();
+    let sidecar_bin = if cfg!(target_os = "windows") {
+        "meetwit-sidecar.exe"
+    } else {
+        "meetwit-sidecar"
+    };
 
-    // 1. Look for the bundled binary (release: alongside the app exe).
+    // 1. Look for the bundled binary (release: in the platform resources dir).
     if let Some(exe) = exe.as_ref() {
+        // macOS: <app>/Contents/MacOS/exe → ../Resources. Windows/Linux: Tauri
+        // places resources next to the exe, so check the exe's own directory.
+        #[cfg(target_os = "macos")]
         let resources = exe
             .parent()
             .and_then(|p| p.parent())
             .map(|p| p.join("Resources"));
+        #[cfg(not(target_os = "macos"))]
+        let resources = exe.parent().map(std::path::Path::to_path_buf);
+
         if let Some(res) = resources
-            && res.join("python-backend").join("meetwit-sidecar").is_file()
+            && res.join("python-backend").join(sidecar_bin).is_file()
         {
             log::info!("sidecar: using bundled binary in {}", res.display());
             return SpawnOptions::release(&res);

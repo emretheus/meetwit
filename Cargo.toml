@@ -36,6 +36,15 @@ case_sensitive_file_extension_comparisons = "allow"
 unnecessary_wraps = "allow"
 uninlined_format_args = "warn"       # keep — actually catches readability issues
 
+# Pin cpal to a mainline commit that supports WASAPI loopback capture (opening
+# an input stream on an output device) — needed for Windows system-audio capture
+# (see desktop/src-tauri/src/audio/system.rs). Same 0.15.3 line as the crates.io
+# release, just newer; the commit also carries a macOS non-default-output fix
+# (#946), so it's a safe superset for the macOS mic path too. Must live at the
+# workspace root (cargo ignores [patch] in member crates).
+[patch.crates-io]
+cpal = { git = "https://github.com/RustAudio/cpal", rev = "51c3b43" }
+
 [profile.release]
 codegen-units = 1
 lto = "thin"

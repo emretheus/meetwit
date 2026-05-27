@@ -3,7 +3,13 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    compile_swift_bridge();
+    // System audio on macOS is captured through a Swift Core Audio process tap.
+    // Only compile/link it when actually targeting macOS — on Windows/Linux the
+    // system-audio path uses a native backend (see src/audio/system.rs) and
+    // swiftc isn't available, so invoking it would break the build.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        compile_swift_bridge();
+    }
     tauri_build::build();
 }
 
@@ -11,6 +17,7 @@ fn main() {
 ///
 /// We use `swiftc -emit-library -static` directly rather than xcodebuild —
 /// Command Line Tools is sufficient, no full Xcode required.
+#[allow(dead_code)] // only called on macOS (see main)
 fn compile_swift_bridge() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR");
