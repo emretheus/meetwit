@@ -39,6 +39,8 @@ pub struct AppState {
     calendar_nudge_enabled: Arc<AtomicBool>,
     /// Calendar event external ids already nudged (de-dupe — one nudge/event).
     nudged_events: Arc<Mutex<HashSet<String>>>,
+    /// Live embedded-terminal sessions (the "Claude Code" tab), keyed by id.
+    pty_sessions: Arc<Mutex<HashMap<String, crate::pty::PtySession>>>,
 }
 
 impl Default for AppState {
@@ -55,6 +57,7 @@ impl Default for AppState {
             detection_enabled: Arc::new(AtomicBool::new(true)),
             calendar_nudge_enabled: Arc::new(AtomicBool::new(true)),
             nudged_events: Arc::new(Mutex::new(HashSet::new())),
+            pty_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -130,5 +133,11 @@ impl AppState {
     /// the FIRST nudge for it (false → already nudged, skip).
     pub fn mark_event_nudged(&self, external_id: &str) -> bool {
         self.nudged_events.lock().insert(external_id.to_string())
+    }
+
+    // ─── Embedded terminal (the "Claude Code" tab) ────────────────────────
+
+    pub fn pty_sessions(&self) -> Arc<Mutex<HashMap<String, crate::pty::PtySession>>> {
+        self.pty_sessions.clone()
     }
 }

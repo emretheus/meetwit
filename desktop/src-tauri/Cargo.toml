@@ -54,6 +54,9 @@ tauri-plugin-notification = "2"
 # Cross-platform native file dialogs (open/save) — replaces the macOS-only
 # `osascript` pickers so the same code works on Windows/Linux.
 rfd = "0.15"
+# Embedded terminal (the "Claude Code" tab): a real PTY so `claude` runs inside
+# the app. Cross-platform (ConPTY on Windows, openpty on macOS/Linux).
+portable-pty = "0.8"
 
 # Whisper engine. Base build is CPU-only so the app runs on ANY machine (a
 # Vulkan/Metal-less box must not crash at load time). GPU acceleration is opted
