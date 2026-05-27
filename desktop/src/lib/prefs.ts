@@ -11,7 +11,7 @@ export interface UserPrefs {
   startNotification: boolean;
   autoSummary: boolean;
   notifications: boolean;
-  summaryProvider: 'ollama' | 'openai' | 'anthropic' | 'groq' | 'openrouter';
+  summaryProvider: 'ollama' | 'openai' | 'anthropic' | 'groq' | 'openrouter' | 'claude-code';
   summaryModel: string;
   systemAudioBackend: 'core-audio' | 'screen-capture-kit';
   transcriptModel: string;

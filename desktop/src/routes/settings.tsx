@@ -862,6 +862,7 @@ function SummaryTab({
   llm: LlmStatus | null;
 }) {
   const isLocal = prefs.summaryProvider === 'ollama';
+  const isClaudeCode = prefs.summaryProvider === 'claude-code';
 
   return (
     <>
@@ -896,8 +897,9 @@ function SummaryTab({
           }
         >
           <option value="ollama">Built-in AI (Offline, No API needed)</option>
+          <option value="claude-code">Claude Code (your subscription, no key)</option>
           <option value="openai">OpenAI</option>
-          <option value="anthropic">Claude</option>
+          <option value="anthropic">Claude (API key)</option>
           <option value="groq">Groq</option>
           <option value="openrouter">OpenRouter</option>
         </Select>
@@ -940,6 +942,11 @@ function SummaryTab({
               </div>
             )}
           </div>
+        ) : isClaudeCode ? (
+          <ClaudeCodeSummary
+            model={prefs.summaryModel}
+            onModelChange={(m) => onChange({ ...prefs, summaryModel: m })}
+          />
         ) : (
           <RemoteProviderForm
             provider={prefs.summaryProvider}
@@ -985,6 +992,79 @@ function SummaryTab({
         </p>
       </Section>
     </>
+  );
+}
+
+/**
+ * Summary via the local Claude Code CLI (the user's subscription, no API key).
+ * Model picker (opus/sonnet/haiku) + a live "detected / not installed" status +
+ * a privacy note, since this is the one summary path that leaves the machine.
+ */
+function ClaudeCodeSummary({
+  model,
+  onModelChange,
+}: {
+  model: string;
+  onModelChange: (m: string) => void;
+}) {
+  const [installed, setInstalled] = useState<boolean | null>(null);
+  // Default to a sensible model the first time this provider is picked.
+  const current = ['opus', 'sonnet', 'haiku'].includes(model) ? model : 'sonnet';
+
+  useEffect(() => {
+    if (!['opus', 'sonnet', 'haiku'].includes(model)) onModelChange('sonnet');
+  }, [model, onModelChange]);
+
+  useEffect(() => {
+    let alive = true;
+    void claudeAvailable()
+      .then((ok) => alive && setInstalled(ok))
+      .catch(() => alive && setInstalled(false));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div>
+        <label className="text-[12px] font-medium text-zinc-700">Model</label>
+        <Select className="mt-1.5" value={current} onChange={(e) => onModelChange(e.target.value)}>
+          <option value="opus">Claude Opus (most capable)</option>
+          <option value="sonnet">Claude Sonnet (balanced)</option>
+          <option value="haiku">Claude Haiku (fastest)</option>
+        </Select>
+      </div>
+
+      <div className="flex items-center gap-2 text-[12px]">
+        <span className="text-zinc-500">Status:</span>
+        {installed === null ? (
+          <span className="text-zinc-400">checking…</span>
+        ) : installed ? (
+          <span className="font-medium text-emerald-600">Claude Code detected</span>
+        ) : (
+          <span className="text-amber-600">
+            Not installed —{' '}
+            <a
+              href="https://docs.claude.com/claude-code"
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              install it
+            </a>
+            .
+          </span>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-blue-200 bg-blue-50/60 px-3 py-2 text-[11.5px] leading-relaxed text-blue-900">
+        Summaries run through your installed <code className="font-mono">claude</code> CLI on{' '}
+        <strong>your Claude subscription</strong> — no API key, no extra cost. Privacy note: unlike
+        the rest of Meetwit, this sends the transcript to Anthropic via your own Claude Code
+        session.
+      </div>
+    </div>
   );
 }
 
@@ -1087,6 +1167,7 @@ function RemoteProviderForm({
 
   const variants: Record<typeof provider, string[]> = {
     ollama: [],
+    'claude-code': [], // handled by ClaudeCodeSummary, never reaches this form
     openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1'],
     anthropic: ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5'],
     groq: ['llama-3.3-70b-versatile', 'mixtral-8x7b'],
