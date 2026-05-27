@@ -160,7 +160,9 @@ pub fn mic_record_stop(state: State<'_, AppState>) -> Result<Option<String>, Str
     Ok(p.map(|p| p.display().to_string()))
 }
 
-// ─── System audio commands (ScreenCaptureKit) ───────────────────────────
+// ─── System audio commands ───────────────────────────────────────────────
+// Backend is platform-specific (macOS Core Audio tap, Windows WASAPI loopback);
+// see audio/system.rs. The command surface here is platform-neutral.
 
 #[derive(Debug, Serialize)]
 pub struct SystemAudioStatus {
@@ -169,28 +171,24 @@ pub struct SystemAudioStatus {
     pub rms: f32,
 }
 
-/// Returns true if ScreenCaptureKit is callable on this macOS version.
+/// Returns true if system-audio capture is available on this machine
+/// (macOS 14.4+ for the tap; any default render device on Windows).
 #[tauri::command]
 pub fn system_audio_available() -> bool {
     sck_available()
 }
 
-/// Start capturing system audio. macOS prompts for Screen Recording
-/// permission on first call.
+/// Start capturing system audio (the "other side" of a call). On macOS the OS
+/// prompts for Audio Capture permission on first call; Windows loopback needs
+/// no permission.
 ///
-/// `backend` selects the capture API: `"screen-capture-kit"` (default) or
-/// `"core-audio"`. Today both route through the ScreenCaptureKit tap — Core
-/// Audio is a planned lower-latency path. We accept the preference now so the
-/// Settings choice is honored once the second backend lands, and log which
-/// one was requested.
+/// `backend` is accepted for forward-compat (a Settings preference) but
+/// currently ignored — each platform uses its single native backend.
 #[tauri::command]
 pub fn system_audio_start(
     state: State<'_, AppState>,
     backend: Option<String>,
 ) -> Result<SystemAudioStatus, String> {
-    // System audio is captured via the Core Audio process-tap API regardless
-    // of this preference now (the old ScreenCaptureKit path was unreliable —
-    // it never delivered remote audio when headphones were connected).
     let _ = backend;
     let slot = state.system_audio();
     let mut guard = slot.lock();
@@ -201,7 +199,7 @@ pub fn system_audio_start(
                 // Log loudly — this used to be swallowed by the frontend's
                 // console.warn, leaving "my voice records but the other side
                 // doesn't" with no trace. The mixer then runs mic-only.
-                log::error!("system_audio: SCK start FAILED: {e}");
+                log::error!("system_audio: capture start FAILED: {e}");
                 return Err(e.to_string());
             }
         }
