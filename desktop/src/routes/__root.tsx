@@ -8,6 +8,7 @@ import {
 import type { QueryClient } from '@tanstack/react-query';
 import { SideNav } from '@/components/SideNav';
 import { RecordingPill } from '@/components/RecordingPill';
+import { ClaudeTerminalHost } from '@/components/ClaudeTerminalHost';
 import { ToastStack } from '@/components/ToastStack';
 import { SessionRecovery } from '@/components/SessionRecovery';
 import { MeetingNudge } from '@/components/MeetingNudge';
@@ -20,7 +21,6 @@ import {
 import { appendTranscripts } from '@/lib/backend';
 import { getPrefs } from '@/lib/prefs';
 import { useBackendReady } from '@/lib/useBackendReady';
-import { useInsightsWatcher } from '@/lib/useInsightsWatcher';
 import { useMeetingStore } from '@/stores/meetingStore';
 
 interface RouterContext {
@@ -54,7 +54,6 @@ async function migrateApiKeysToKeychain(): Promise<void> {
 }
 
 function RootLayout() {
-  useInsightsWatcher();
   const navigate = useNavigate();
   const location = useLocation();
   const { ready: backendReady } = useBackendReady();
@@ -181,6 +180,8 @@ function RootLayout() {
       </main>
       <MeetingNudge />
       <ToastStack />
+      {/* Single persistent Claude Code terminal — survives route changes. */}
+      <ClaudeTerminalHost />
     </div>
   );
 }

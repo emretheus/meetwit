@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import type { TranscriptSegment } from '@/lib/tauri';
-import type { Insight, Meeting, SourceCitation } from '@/lib/backend';
+import type { Meeting, SourceCitation } from '@/lib/backend';
 
 export interface UiSegment extends TranscriptSegment {
   meetingId: string;
@@ -34,18 +34,6 @@ interface AskState {
   error: string | null;
 }
 
-/**
- * One proactive-watcher insight, plus client-side display state.
- *
- * `id` is a deterministic hash of timestamp+headline so the same insight
- * arriving twice from successive scans collapses into one row.
- */
-export interface StoredInsight extends Insight {
-  id: string;
-  receivedAt: number;
-  acknowledged: boolean;
-}
-
 interface MeetingState {
   meeting: Meeting | null;
   running: boolean;
@@ -58,9 +46,14 @@ interface MeetingState {
   error: string | null;
   ask: AskState;
 
-  insights: StoredInsight[];
-  /** High-water mark in audio seconds that the proactive watcher has scanned up to. */
-  insightsScannedThrough: number;
+  // Embedded "Claude Code" terminal — app-level so the live `claude` session
+  // survives tab AND route changes (the terminal DOM node is re-parented, never
+  // re-created; see ClaudeTerminalHost).
+  /** Lazily true once the Claude tab is first opened (gates PTY spawn). */
+  claudeEverOpened: boolean;
+  /** True while the right-panel Claude tab is the active view. */
+  claudeTabActive: boolean;
+  setClaudeTabActive: (active: boolean) => void;
 
   setMeeting: (m: Meeting | null) => void;
   setRunning: (b: boolean) => void;
@@ -76,12 +69,6 @@ interface MeetingState {
   finishAssistantTurn: (turnId: string, error?: string | null) => void;
   resetAsk: () => void;
 
-  // Insights actions
-  addInsights: (items: Insight[], scannedThrough: number) => void;
-  acknowledgeInsight: (id: string) => void;
-  acknowledgeAllInsights: () => void;
-  dismissInsight: (id: string) => void;
-
   reset: () => void;
 }
 
@@ -96,13 +83,6 @@ function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function insightId(item: Insight): string {
-  // Same headline + same timestamp = same insight. Successive scans often
-  // re-flag the same moment, especially while the model is on the same chunk.
-  const stamp = Math.round(item.evidence_timestamp_seconds * 10) / 10;
-  return `${stamp}-${item.headline.slice(0, 60)}`;
-}
-
 export const useMeetingStore = create<MeetingState>((set) => ({
   meeting: null,
   running: false,
@@ -112,8 +92,14 @@ export const useMeetingStore = create<MeetingState>((set) => ({
   lastSegmentAt: null,
   error: null,
   ask: emptyAsk,
-  insights: [],
-  insightsScannedThrough: 0,
+  claudeEverOpened: false,
+  claudeTabActive: false,
+
+  setClaudeTabActive: (active) =>
+    set((s) => ({
+      claudeTabActive: active,
+      claudeEverOpened: s.claudeEverOpened || active,
+    })),
 
   setMeeting: (meeting) => set({ meeting }),
   setRunning: (running) =>
@@ -172,9 +158,7 @@ export const useMeetingStore = create<MeetingState>((set) => ({
     set((s) => ({
       ask: {
         ...s.ask,
-        turns: s.ask.turns.map((turn) =>
-          turn.id === turnId ? { ...turn, sources } : turn,
-        ),
+        turns: s.ask.turns.map((turn) => (turn.id === turnId ? { ...turn, sources } : turn)),
       },
     })),
 
@@ -185,50 +169,12 @@ export const useMeetingStore = create<MeetingState>((set) => ({
         asking: false,
         error,
         turns: s.ask.turns.map((turn) =>
-          turn.id === turnId
-            ? { ...turn, streaming: false, error: error ?? null }
-            : turn,
+          turn.id === turnId ? { ...turn, streaming: false, error: error ?? null } : turn,
         ),
       },
     })),
 
   resetAsk: () => set({ ask: emptyAsk }),
-
-  addInsights: (items, scannedThrough) =>
-    set((s) => {
-      const byId = new Map(s.insights.map((i) => [i.id, i]));
-      for (const item of items) {
-        const id = insightId(item);
-        if (byId.has(id)) continue; // dedupe — same insight, already shown
-        byId.set(id, {
-          ...item,
-          id,
-          receivedAt: Date.now(),
-          acknowledged: false,
-        });
-      }
-      return {
-        insights: Array.from(byId.values()).sort(
-          (a, b) => a.evidence_timestamp_seconds - b.evidence_timestamp_seconds,
-        ),
-        insightsScannedThrough: Math.max(s.insightsScannedThrough, scannedThrough),
-      };
-    }),
-
-  acknowledgeInsight: (id) =>
-    set((s) => ({
-      insights: s.insights.map((i) => (i.id === id ? { ...i, acknowledged: true } : i)),
-    })),
-
-  acknowledgeAllInsights: () =>
-    set((s) => ({
-      insights: s.insights.map((i) => ({ ...i, acknowledged: true })),
-    })),
-
-  dismissInsight: (id) =>
-    set((s) => ({
-      insights: s.insights.filter((i) => i.id !== id),
-    })),
 
   reset: () =>
     set({
@@ -240,8 +186,9 @@ export const useMeetingStore = create<MeetingState>((set) => ({
       lastSegmentAt: null,
       error: null,
       ask: emptyAsk,
-      insights: [],
-      insightsScannedThrough: 0,
+      // Drop the terminal binding too — a new session gets a fresh `claude`.
+      claudeTabActive: false,
+      claudeEverOpened: false,
     }),
 }));
 
@@ -251,14 +198,8 @@ export const useMeeting = (): Meeting | null => useMeetingStore((s) => s.meeting
 export const useRunning = (): boolean => useMeetingStore((s) => s.running);
 export const usePaused = (): boolean => useMeetingStore((s) => s.paused);
 export const useStartedAt = (): number | null => useMeetingStore((s) => s.startedAt);
-export const useSegments = (): UiSegment[] =>
-  useMeetingStore(useShallow((s) => s.segments));
-export const useLastSegmentAt = (): number | null =>
-  useMeetingStore((s) => s.lastSegmentAt);
+export const useSegments = (): UiSegment[] => useMeetingStore(useShallow((s) => s.segments));
+export const useLastSegmentAt = (): number | null => useMeetingStore((s) => s.lastSegmentAt);
+export const useClaudeEverOpened = (): boolean => useMeetingStore((s) => s.claudeEverOpened);
+export const useClaudeTabActive = (): boolean => useMeetingStore((s) => s.claudeTabActive);
 export const useAsk = (): AskState => useMeetingStore(useShallow((s) => s.ask));
-export const useInsights = (): StoredInsight[] =>
-  useMeetingStore(useShallow((s) => s.insights));
-export const useInsightsScannedThrough = (): number =>
-  useMeetingStore((s) => s.insightsScannedThrough);
-export const useUnreadInsightCount = (): number =>
-  useMeetingStore((s) => s.insights.filter((i) => !i.acknowledged).length);

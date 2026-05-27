@@ -637,34 +637,6 @@ export interface LiveAskTurn {
   content: string;
 }
 
-export interface Insight {
-  kind: 'contradiction' | 'risk' | 'commitment' | 'decision';
-  severity: 'low' | 'medium' | 'high';
-  headline: string;
-  detail: string;
-  evidence_quote: string;
-  evidence_timestamp_seconds: number;
-  conflicts_with: string | null;
-}
-
-export interface InsightScanResponse {
-  insights: Insight[];
-  scanned_through_seconds: number;
-}
-
-export async function scanInsights(
-  meetingId: string,
-  sinceAudioSeconds: number,
-): Promise<InsightScanResponse> {
-  return jsonFetch<InsightScanResponse>(`/meetings/${meetingId}/insights/scan`, {
-    method: 'POST',
-    body: JSON.stringify({
-      meeting_id: meetingId,
-      since_audio_seconds: sinceAudioSeconds,
-    }),
-  });
-}
-
 export async function liveAsk(
   body: {
     meeting_id: string;

@@ -321,9 +321,22 @@ export async function apikeyDelete(provider: string): Promise<void> {
 
 // ─── Embedded terminal — the "Claude Code" tab ──────────────────────────
 
-/** Open a PTY (sized cols×rows). When autoClaude, bootstraps + launches claude. Returns a session id. */
-export async function ptySpawn(cols: number, rows: number, autoClaude: boolean): Promise<string> {
-  return invoke<string>('pty_spawn', { cols, rows, autoClaude });
+/** Open a PTY (sized cols×rows). When autoClaude, bootstraps + launches claude
+ *  primed with the active meeting (id + title) as context. Returns a session id. */
+export async function ptySpawn(
+  cols: number,
+  rows: number,
+  autoClaude: boolean,
+  meetingId: string | null,
+  meetingTitle: string | null,
+): Promise<string> {
+  return invoke<string>('pty_spawn', {
+    cols,
+    rows,
+    autoClaude,
+    meetingId,
+    meetingTitle,
+  });
 }
 
 /** Forward keystrokes / paste data to the PTY. */
