@@ -32,6 +32,15 @@ def _configure_logging(level: str) -> None:
 
 
 def main() -> None:
+    # Subcommand dispatch: `meetwit-sidecar mcp` runs the stdio MCP server
+    # (for the user's own Claude Code); no arg runs the HTTP sidecar. Same
+    # binary serves both roles, so the PyInstaller bundle is unchanged.
+    if len(sys.argv) > 1 and sys.argv[1] == "mcp":
+        from meetwit.mcp_server import main as mcp_main
+
+        mcp_main()
+        return
+
     settings = get_settings()
     _configure_logging(settings.log_level)
     uvicorn.run(
