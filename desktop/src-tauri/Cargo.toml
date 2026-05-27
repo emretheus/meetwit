@@ -55,24 +55,35 @@ tauri-plugin-notification = "2"
 # `osascript` pickers so the same code works on Windows/Linux.
 rfd = "0.15"
 
-# ─── macOS: Apple GPU/ML acceleration + Keychain ───────────────────────────
+# Whisper engine. Base build is CPU-only so the app runs on ANY machine (a
+# Vulkan/Metal-less box must not crash at load time). GPU acceleration is opted
+# in per-platform: macOS always enables Metal+CoreML (always present on the
+# Macs we ship to); Windows/Linux enable Vulkan only via the `gpu-vulkan`
+# feature (the GPU installer build passes `--features gpu-vulkan`; the default
+# installer stays CPU and works everywhere). Mirrors Meetily's CPU-default,
+# GPU-opt-in strategy.
+whisper-rs = { version = "0.13", default-features = false }
+
+# ─── macOS: Apple Keychain + Metal/CoreML (always on) ──────────────────────
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.13", default-features = false, features = ["metal", "coreml"] }
 keyring = { version = "3", features = ["apple-native"] }
 # Unix signal handling for cooperative sidecar shutdown (SIGTERM → SIGKILL).
 nix = { version = "0.29", features = ["signal"] }
 
-# ─── Windows: Vulkan GPU acceleration (Meetily's Windows default) + Credential Manager ───
+# ─── Windows: Credential Manager (whisper CPU by default; Vulkan via feature) ─
 [target.'cfg(target_os = "windows")'.dependencies]
-whisper-rs = { version = "0.13", default-features = false, features = ["vulkan"] }
 keyring = { version = "3", features = ["windows-native"] }
 
-# ─── Linux: CPU whisper + Secret Service ───────────────────────────────────
+# ─── Linux: Secret Service (whisper CPU by default; Vulkan via feature) ─────
 [target.'cfg(target_os = "linux")'.dependencies]
-whisper-rs = { version = "0.13", default-features = false }
 keyring = { version = "3", features = ["linux-native"] }
 nix = { version = "0.29", features = ["signal"] }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+# Opt-in Vulkan GPU acceleration for Windows/Linux. The default installer omits
+# it (CPU, runs everywhere); a separate GPU build enables it. No-op on macOS,
+# which always uses Metal/CoreML.
+gpu-vulkan = ["whisper-rs/vulkan"]
