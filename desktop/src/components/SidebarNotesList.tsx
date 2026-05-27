@@ -10,11 +10,13 @@ import {
 } from 'lucide-react';
 import {
   createFolder,
+  deleteFolder,
   deleteMeeting,
   listFolders,
   listMeetings,
   moveMeetingToFolder,
   patchMeeting,
+  updateFolder,
   type FolderOut,
   type Meeting,
 } from '@/lib/backend';
@@ -35,6 +37,12 @@ export function SidebarNotesList() {
   const [renameDraft, setRenameDraft] = useState('');
   const [pendingDelete, setPendingDelete] = useState<Meeting | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // Folder editing — mirrors the meeting menu/rename/delete pattern.
+  const [folderMenuFor, setFolderMenuFor] = useState<string | null>(null);
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+  const [folderRenameDraft, setFolderRenameDraft] = useState('');
+  const [pendingFolderDelete, setPendingFolderDelete] = useState<FolderOut | null>(null);
+  const [deletingFolder, setDeletingFolder] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => {
     try {
       return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]') as string[]);
@@ -162,10 +170,8 @@ export function SidebarNotesList() {
   }
 
   async function addFolder() {
-    const name = renameDraft.trim() || 'New folder';
     try {
-      await createFolder(name);
-      setRenameDraft('');
+      await createFolder('New folder');
       refresh();
     } catch (err) {
       toast({
@@ -173,6 +179,62 @@ export function SidebarNotesList() {
         description: err instanceof Error ? err.message : String(err),
         tone: 'error',
       });
+    }
+  }
+
+  function startFolderRename(f: FolderOut) {
+    setFolderMenuFor(null);
+    setRenamingFolderId(f.id);
+    setFolderRenameDraft(f.name);
+  }
+
+  async function commitFolderRename(f: FolderOut) {
+    const next = folderRenameDraft.trim();
+    setRenamingFolderId(null);
+    if (!next || next === f.name) return;
+    try {
+      await updateFolder(f.id, { name: next });
+      refresh();
+      toast({ title: 'Folder renamed', tone: 'success', durationMs: 2000 });
+    } catch (err) {
+      toast({
+        title: "Couldn't rename folder",
+        description: err instanceof Error ? err.message : String(err),
+        tone: 'error',
+      });
+    }
+  }
+
+  function requestFolderDelete(f: FolderOut) {
+    setFolderMenuFor(null);
+    setPendingFolderDelete(f);
+  }
+
+  async function confirmFolderDelete() {
+    const f = pendingFolderDelete;
+    if (!f) return;
+    setDeletingFolder(true);
+    try {
+      await deleteFolder(f.id);
+      setFolders((prev) => prev.filter((x) => x.id !== f.id));
+      // Backend rehomes the folder's meetings to root and cascades child
+      // folders, so re-pull the lists to reflect the new layout.
+      refresh();
+      toast({
+        title: 'Folder deleted',
+        description: `"${f.name}" was removed. Its notes were moved to the top level.`,
+        tone: 'success',
+        durationMs: 3000,
+      });
+    } catch (err) {
+      toast({
+        title: "Couldn't delete folder",
+        description: err instanceof Error ? err.message : String(err),
+        tone: 'error',
+      });
+    } finally {
+      setDeletingFolder(false);
+      setPendingFolderDelete(null);
     }
   }
 
@@ -209,6 +271,41 @@ export function SidebarNotesList() {
           &ldquo;{pendingDelete?.title ?? 'Untitled meeting'}&rdquo;
         </span>
         ? This permanently removes its transcript, summary, decisions, and action items.
+      </p>
+    </Modal>
+  );
+
+  const folderDeleteModal = (
+    <Modal
+      open={!!pendingFolderDelete}
+      onClose={() => !deletingFolder && setPendingFolderDelete(null)}
+      title="Delete folder?"
+      size="sm"
+      footer={
+        <>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setPendingFolderDelete(null)}
+            disabled={deletingFolder}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            loading={deletingFolder}
+            onClick={() => void confirmFolderDelete()}
+          >
+            Delete
+          </Button>
+        </>
+      }
+    >
+      <p className="text-[13px] leading-relaxed text-zinc-600">
+        Delete{' '}
+        <span className="font-medium text-zinc-900">&ldquo;{pendingFolderDelete?.name}&rdquo;</span>
+        ? The notes inside it are kept and moved to the top level. Any nested folders are removed.
       </p>
     </Modal>
   );
@@ -344,6 +441,7 @@ export function SidebarNotesList() {
     return (
       <>
         {confirmModal}
+        {folderDeleteModal}
         {moveModal}
       </>
     );
@@ -365,6 +463,7 @@ export function SidebarNotesList() {
   return (
     <>
       {confirmModal}
+      {folderDeleteModal}
       {moveModal}
 
       {folders.length > 0 && (
@@ -386,21 +485,92 @@ export function SidebarNotesList() {
       {folders.map((f) => {
         const items = byFolder.get(f.id) ?? [];
         const isCollapsed = collapsed.has(f.id);
+
+        if (renamingFolderId === f.id) {
+          return (
+            <div key={f.id} className="mb-1 px-2 py-1">
+              <input
+                autoFocus
+                value={folderRenameDraft}
+                onChange={(e) => setFolderRenameDraft(e.target.value)}
+                onBlur={() => void commitFolderRename(f)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void commitFolderRename(f);
+                  if (e.key === 'Escape') setRenamingFolderId(null);
+                }}
+                className="border-brand-400 focus:ring-brand-100 w-full rounded-md border bg-white px-1.5 py-1 text-[12px] font-medium text-zinc-900 focus:outline-none focus:ring-2"
+                placeholder="Folder name"
+              />
+            </div>
+          );
+        }
+
         return (
-          <div key={f.id} className="mb-1">
-            <button
-              type="button"
-              onClick={() => toggleCollapse(f.id)}
-              className="flex w-full items-center gap-1 rounded-lg px-2 py-1.5 text-left text-[12px] font-medium text-zinc-600 transition hover:bg-white/70"
-            >
-              {isCollapsed ? (
-                <ChevronRight className="h-3.5 w-3.5 text-zinc-400" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
-              )}
-              <span className="min-w-0 flex-1 truncate">{f.name}</span>
-              <span className="text-[10px] tabular-nums text-zinc-400">{items.length}</span>
-            </button>
+          <div key={f.id} className="group/folder relative mb-1">
+            <div className="flex w-full items-center gap-1 rounded-lg px-2 py-1.5 text-[12px] font-medium text-zinc-600 transition hover:bg-white/70">
+              <button
+                type="button"
+                onClick={() => toggleCollapse(f.id)}
+                className="flex min-w-0 flex-1 items-center gap-1 text-left"
+              >
+                {isCollapsed ? (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                )}
+                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setFolderMenuFor((cur) => (cur === f.id ? null : f.id));
+                }}
+                title="More"
+                className={[
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded text-zinc-400 transition',
+                  'hover:bg-zinc-200/70 hover:text-zinc-700',
+                  folderMenuFor === f.id
+                    ? 'opacity-100'
+                    : 'opacity-0 group-hover/folder:opacity-100',
+                ].join(' ')}
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+              <span className="w-6 text-right text-[10px] tabular-nums text-zinc-400 group-hover/folder:hidden">
+                {items.length}
+              </span>
+            </div>
+
+            {folderMenuFor === f.id && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
+                  aria-hidden="true"
+                  onClick={() => setFolderMenuFor(null)}
+                />
+                <div className="absolute right-1 top-8 z-20 w-40 overflow-hidden rounded-lg border border-zinc-200 bg-white py-1 shadow-lg ring-1 ring-black/5">
+                  <button
+                    type="button"
+                    onClick={() => startFolderRename(f)}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-zinc-700 transition hover:bg-zinc-50"
+                  >
+                    <Pencil className="h-3.5 w-3.5 text-zinc-500" />
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => requestFolderDelete(f)}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-red-600 transition hover:bg-red-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
+                  </button>
+                </div>
+              </>
+            )}
+
             {!isCollapsed && items.length > 0 && (
               <ul className="ml-2 flex flex-col gap-px border-l border-zinc-200 pl-1">
                 {items.map(renderMeeting)}

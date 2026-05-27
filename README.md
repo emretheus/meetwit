@@ -9,6 +9,15 @@ between what's being discussed and what your company has already decided.
 **Everything runs locally on your Mac. Nothing leaves.** No accounts, no
 telemetry, no cloud — the app talks only to `localhost`.
 
+<!--
+  Demo: drop a screen recording into assets/demo.gif (see assets/make-demo-gif.sh)
+  then uncomment the block below.
+
+<p align="center">
+  <img src="assets/demo.gif" alt="Meetwit demo — live transcription, in-meeting copilot, and document grounding" width="800">
+</p>
+-->
+
 ---
 
 ## What makes it different

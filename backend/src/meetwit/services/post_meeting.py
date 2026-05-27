@@ -34,16 +34,32 @@ company_context (single paragraph or null), recommended_next_steps (list of bull
 No prose outside the JSON.
 """
 
-DECISIONS_SYSTEM = """Extract every distinct decision made in this meeting.
+DECISIONS_SYSTEM = """Extract every DISTINCT decision made in this meeting.
 A decision = a commitment to a course of action, a chosen option, a policy.
 Output JSON: {"decisions": [{"text": "...", "project": "..." or null}]}.
-Be conservative — only include explicit decisions. Empty list if none.
+
+Rules:
+- Be conservative: only explicit decisions actually stated in the transcript.
+- NEVER repeat the same decision twice. Merge near-duplicates into one entry.
+- Each `text` must be a real, specific sentence from the discussion — never a
+  placeholder, label, or made-up filler.
+- The transcript may have transcription errors; fix obvious spelling/word slips.
+- Empty list if no real decision was made.
 """
 
-ACTIONS_SYSTEM = """Extract every action item (task someone agreed to do).
+ACTIONS_SYSTEM = """Extract every action item — a concrete task someone agreed to do.
 Output JSON: {"action_items": [{"task": "...", "owner": "..." or null, "deadline": "..." or null}]}.
-`owner` is whoever was named to do it (best guess; null if unclear).
-`deadline` is a free-form date string if mentioned; null otherwise.
+
+Rules:
+- `task` must describe a real, specific task in plain language (e.g. "Send the
+  vector files to the print vendor"). NEVER output placeholders, field names,
+  or generic stand-ins like "generate_text", "task", "action", or "TBD".
+- `owner` is the actual person named to do it. If no real name was given, use
+  null. NEVER use the literal word "Speaker" or a generic role as the owner.
+- `deadline` is a date/time ONLY if one was actually mentioned; otherwise null.
+  Never invent a date.
+- Do not repeat the same task. The transcript may have transcription errors;
+  correct obvious slips. Empty list if no real action items.
 """
 
 TITLE_SYSTEM = """Write a short, specific title for this meeting (3-7 words).
@@ -73,6 +89,41 @@ class PostMeetingProgress:
 
 def _format_transcript(rows: list[Transcript]) -> str:
     return "\n".join(f"[{r.audio_start:6.1f}s] {r.speaker or 'Speaker'}: {r.text}" for r in rows)
+
+
+# Placeholder/field-name strings small models sometimes emit instead of real
+# content. Anything matching these (case-insensitively) is dropped on insert.
+_PLACEHOLDER_TASKS = frozenset(
+    {"generate_text", "task", "action", "action item", "tbd", "n/a", "none", "todo", "..."}
+)
+_PLACEHOLDER_OWNERS = frozenset({"speaker", "owner", "unknown", "n/a", "none", "tbd"})
+
+
+def _norm(s: str) -> str:
+    """Lowercased, whitespace-collapsed key for dedup/placeholder comparison."""
+    return " ".join(s.lower().split())
+
+
+def _clean_owner(owner: str | None) -> str | None:
+    """Drop placeholder / generic-role owners (e.g. the echoed 'Speaker' label)."""
+    if owner is None:
+        return None
+    norm = _norm(owner)
+    if not norm or norm in _PLACEHOLDER_OWNERS or norm.startswith("speaker "):
+        return None
+    return owner.strip()
+
+
+def _dedup_keep_order(texts: list[str]) -> list[str]:
+    """Keep the first occurrence of each normalized text, preserving order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in texts:
+        key = _norm(t)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(t.strip())
+    return out
 
 
 async def process_meeting(
@@ -160,16 +211,20 @@ async def process_meeting(
         async with Session(engine) as session:
             # Idempotency: wipe prior decisions for this meeting.
             await session.execute(delete(Decision).where(Decision.meeting_id == meeting_id))
-            for d in decisions.decisions:
-                if d.text.strip():
-                    session.add(
-                        Decision(
-                            meeting_id=meeting_id,
-                            text=d.text,
-                            project=d.project,
-                            created_at=datetime.now(UTC),
-                        )
+            # Dedup near-identical decisions the model may have repeated, keeping
+            # the project of the first occurrence.
+            project_by_text = {
+                _norm(d.text): d.project for d in decisions.decisions if d.text.strip()
+            }
+            for text in _dedup_keep_order([d.text for d in decisions.decisions]):
+                session.add(
+                    Decision(
+                        meeting_id=meeting_id,
+                        text=text,
+                        project=project_by_text.get(_norm(text)),
+                        created_at=datetime.now(UTC),
                     )
+                )
             await session.commit()
         progress.decisions_done = True
 
@@ -185,18 +240,23 @@ async def process_meeting(
         )
         async with Session(engine) as session:
             await session.execute(delete(ActionItem).where(ActionItem.meeting_id == meeting_id))
+            seen_tasks: set[str] = set()
             for a in actions.action_items:
-                if a.task.strip():
-                    session.add(
-                        ActionItem(
-                            meeting_id=meeting_id,
-                            task=a.task,
-                            owner=a.owner,
-                            deadline=a.deadline,
-                            status="open",
-                            created_at=datetime.now(UTC),
-                        )
+                key = _norm(a.task)
+                # Drop blanks, placeholder/field-name tasks, and exact repeats.
+                if not key or key in _PLACEHOLDER_TASKS or key in seen_tasks:
+                    continue
+                seen_tasks.add(key)
+                session.add(
+                    ActionItem(
+                        meeting_id=meeting_id,
+                        task=a.task.strip(),
+                        owner=_clean_owner(a.owner),
+                        deadline=a.deadline,
+                        status="open",
+                        created_at=datetime.now(UTC),
                     )
+                )
             await session.commit()
         progress.actions_done = True
 
