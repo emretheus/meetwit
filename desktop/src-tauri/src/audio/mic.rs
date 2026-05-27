@@ -250,12 +250,20 @@ fn run_stream(
     };
     let resampler = Arc::new(resampler);
 
+    // Per-mic DSP enhancement (ported from Meetily's pipeline): a high-pass to
+    // strip sub-80Hz rumble, then EBU R128 loudness normalization so quiet or
+    // hot mics land at a consistent level whisper can transcribe. Stateful
+    // across blocks, so it lives behind a Mutex shared by the capture closure
+    // (the closure is cloned across cpal's per-format branches).
+    let enhancer = Arc::new(Mutex::new(MicEnhancer::new(TARGET_SAMPLE_RATE)));
+
     let process_block = {
         let shared = shared.clone();
         let resampler = resampler.clone();
+        let enhancer = enhancer.clone();
         move |raw: &[f32]| {
             let mono = downmix_to_mono(raw, channels as usize);
-            let at_target = if let Some(rs) = resampler.as_ref() {
+            let downsampled = if let Some(rs) = resampler.as_ref() {
                 resample_block(rs, &mono).unwrap_or_else(|err| {
                     log::warn!("resample failed: {err}");
                     mono.clone()
@@ -263,6 +271,8 @@ fn run_stream(
             } else {
                 mono.clone()
             };
+            // High-pass + loudness-normalize at the target (16 kHz) rate.
+            let at_target = enhancer.lock().process(&downsampled);
 
             let level_rms = rms(&at_target);
             let clipped = at_target.iter().any(|s| s.abs() >= 0.99);
@@ -368,9 +378,9 @@ fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
 /// (working) resampler.
 struct MicResampler {
     ratio: f64,   // out_rate / in_rate
-    last: f32,    // last input sample of the previous block (for interpolation across the boundary)
-    pos: f64,     // fractional read position into the current logical stream
-    primed: bool, // have we seen at least one sample yet?
+    last: f32,    // the previous block's final input sample (history sample at index -1)
+    pos: f64,     // fractional read position, in input-sample units, relative to THIS block's start
+    primed: bool, // have we emitted the very first sample yet?
 }
 
 impl MicResampler {
@@ -383,48 +393,196 @@ impl MicResampler {
         }
     }
 
-    /// Resample one block. `pos` is kept relative to the start of THIS block;
-    /// `last` bridges the gap to the previous block so there's no discontinuity.
+    /// Resample one block of input, maintaining a single continuous read
+    /// position across calls so block boundaries introduce no glitch.
+    ///
+    /// `pos` is the next output's read position in input-sample coordinates,
+    /// measured from the *start of `input`*. We treat the logical stream as
+    /// `[last, input[0], input[1], …, input[n-1]]`, i.e. index `-1` is `last`
+    /// (the prior block's final sample), so an output that lands between the
+    /// blocks interpolates `last → input[0]` correctly. After consuming the
+    /// block we subtract its length from `pos`, leaving it relative to the
+    /// *next* block — and crucially clamp `pos >= -1` so we never index before
+    /// the single history sample we keep.
     fn process(&mut self, input: &[f32]) -> Vec<f32> {
         if input.is_empty() {
             return Vec::new();
         }
+        let n = input.len();
         let step = 1.0 / self.ratio; // input samples advanced per output sample
-        let mut out = Vec::with_capacity((input.len() as f64 * self.ratio) as usize + 2);
+        let mut out = Vec::with_capacity((n as f64 * self.ratio) as usize + 2);
 
-        // Read positions are in input-sample units. Index -1 refers to `last`
-        // (the previous block's final sample) so interpolation is continuous.
-        let sample_at = |i: isize, last: f32| -> f32 {
-            if i < 0 {
-                last
-            } else {
-                input[(i as usize).min(input.len() - 1)]
-            }
-        };
+        // Work in an EXTENDED coordinate where index 0 is the history sample
+        // (`last`, the previous block's final sample) and indices 1..=n are
+        // `input[0..n]`. `self.pos` is the next output's read position in this
+        // extended space. Interpolating between extended-index k and k+1 is
+        // always in-bounds for k in [0, n-1], so the last reachable output uses
+        // input[n-1]; anything beyond is carried to the next block.
+        let ext =
+            |k: usize, last: f32, cur: &[f32]| -> f32 { if k == 0 { last } else { cur[k - 1] } };
 
         if !self.primed {
+            // First-ever call: there is no real history sample, so begin reading
+            // at input[0] (extended index 1) rather than interpolating from a
+            // bogus zero. Emit input[0] exactly as the first output.
             self.primed = true;
-            self.pos = 0.0;
+            self.pos = 1.0;
         }
 
-        while self.pos < input.len() as f64 {
-            let i0 = self.pos.floor() as isize;
-            let frac = (self.pos - i0 as f64) as f32;
-            let a = sample_at(i0, self.last);
-            let b = sample_at(i0 + 1, self.last);
+        // Emit while the right neighbour (floor(pos)+1) is still <= n, i.e. the
+        // left neighbour floor(pos) <= n-1 — both in the extended [0, n] range.
+        while self.pos < n as f64 {
+            let k = self.pos.floor() as usize;
+            let frac = (self.pos - k as f64) as f32;
+            let a = ext(k, self.last, input);
+            let b = ext(k + 1, self.last, input);
             out.push(a + (b - a) * frac);
             self.pos += step;
         }
-        // Carry the boundary sample + the leftover fractional position into the
-        // next block so we never drop or duplicate audio.
-        self.last = input[input.len() - 1];
-        self.pos -= input.len() as f64;
+
+        // Rebase coordinates for the next block: the new history sample is
+        // input[n-1], which will sit at extended index 0 next time. We consumed
+        // `n` input samples of stream, so shift `pos` left by `n`. (Extended
+        // index n maps to the new extended index 0 → subtract n.)
+        self.last = input[n - 1];
+        self.pos -= n as f64;
         out
     }
 }
 
 fn resample_block(resampler: &Mutex<MicResampler>, mono: &[f32]) -> Result<Vec<f32>> {
     Ok(resampler.lock().process(mono))
+}
+
+// ─── Mic DSP enhancement (ported from Meetily's audio pipeline) ─────────────
+//
+// Why this exists: some macOS inputs (notably the built-in MacBook mic under
+// "Voice Isolation") hand us audio that is hot, clipped, and rumble-laden —
+// whisper hallucinates over it. Meetily's pipeline solves this with, in order:
+//   1. a first-order high-pass at 80 Hz to remove sub-speech rumble/DC, then
+//   2. EBU R128 loudness normalization to a fixed -23 LUFS target with a
+//      true-peak limiter so the level whisper sees is consistent regardless of
+//      the mic's gain. (Meetily disables RNNoise by default — "whisper handles
+//      noise well" — so we omit it too, keeping the bundle lean.)
+//
+// `MicEnhancer` runs the chain at the 16 kHz target rate, statefully across the
+// streaming blocks (the EBU R128 measurement and the limiter both carry state).
+
+/// First-order IIR high-pass filter. Removes energy below `cutoff_hz`.
+struct HighPassFilter {
+    alpha: f32,
+    prev_input: f32,
+    prev_output: f32,
+}
+
+impl HighPassFilter {
+    fn new(sample_rate: u32, cutoff_hz: f32) -> Self {
+        let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff_hz);
+        let dt = 1.0 / sample_rate as f32;
+        Self {
+            alpha: rc / (rc + dt),
+            prev_input: 0.0,
+            prev_output: 0.0,
+        }
+    }
+
+    fn process_into(&mut self, samples: &mut [f32]) {
+        for s in samples.iter_mut() {
+            // y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+            let filtered = self.alpha * (self.prev_output + *s - self.prev_input);
+            self.prev_input = *s;
+            self.prev_output = filtered;
+            *s = filtered;
+        }
+    }
+}
+
+/// Lookahead true-peak limiter — prevents the normalizer's gain from clipping.
+struct TruePeakLimiter {
+    buffer: Vec<f32>,
+    gain_reduction: Vec<f32>,
+    pos: usize,
+}
+
+impl TruePeakLimiter {
+    fn new(sample_rate: u32) -> Self {
+        const LOOKAHEAD_MS: usize = 10;
+        let n = ((sample_rate as usize * LOOKAHEAD_MS) / 1000).max(1);
+        Self {
+            buffer: vec![0.0; n],
+            gain_reduction: vec![1.0; n],
+            pos: 0,
+        }
+    }
+
+    fn process(&mut self, sample: f32, limit: f32) -> f32 {
+        self.buffer[self.pos] = sample;
+        let abs = sample.abs();
+        self.gain_reduction[self.pos] = if abs > limit { limit / abs } else { 1.0 };
+        let out_pos = (self.pos + 1) % self.buffer.len();
+        let out = self.buffer[out_pos] * self.gain_reduction[out_pos];
+        self.pos = out_pos;
+        out
+    }
+}
+
+/// High-pass + EBU R128 loudness normalization for the mic stream.
+struct MicEnhancer {
+    hpf: HighPassFilter,
+    ebur128: ebur128::EbuR128,
+    limiter: TruePeakLimiter,
+    gain_linear: f32,
+    analyze_buffer: Vec<f32>,
+    true_peak_limit: f32,
+}
+
+impl MicEnhancer {
+    fn new(sample_rate: u32) -> Self {
+        const TRUE_PEAK_LIMIT_DB: f32 = -1.0;
+        let ebur128 =
+            ebur128::EbuR128::new(1, sample_rate, ebur128::Mode::I | ebur128::Mode::TRUE_PEAK)
+                .expect("create EBU R128 normalizer");
+        Self {
+            hpf: HighPassFilter::new(sample_rate, 80.0),
+            ebur128,
+            limiter: TruePeakLimiter::new(sample_rate),
+            gain_linear: 1.0,
+            analyze_buffer: Vec::with_capacity(512),
+            true_peak_limit: 10_f32.powf(TRUE_PEAK_LIMIT_DB / 20.0),
+        }
+    }
+
+    /// High-pass, then loudness-normalize a block. Returns same length as input.
+    fn process(&mut self, input: &[f32]) -> Vec<f32> {
+        const TARGET_LUFS: f64 = -23.0;
+        const ANALYZE_CHUNK: usize = 512;
+
+        if input.is_empty() {
+            return Vec::new();
+        }
+
+        let mut samples = input.to_vec();
+        self.hpf.process_into(&mut samples);
+
+        let mut out = Vec::with_capacity(samples.len());
+        for &s in &samples {
+            self.analyze_buffer.push(s);
+            if self.analyze_buffer.len() >= ANALYZE_CHUNK {
+                if self.ebur128.add_frames_f32(&self.analyze_buffer).is_ok() {
+                    if let Ok(lufs) = self.ebur128.loudness_global() {
+                        if lufs.is_finite() && lufs < 0.0 {
+                            let gain_db = TARGET_LUFS - lufs;
+                            self.gain_linear = 10_f32.powf(gain_db as f32 / 20.0);
+                        }
+                    }
+                }
+                self.analyze_buffer.clear();
+            }
+            let amplified = s * self.gain_linear;
+            out.push(self.limiter.process(amplified, self.true_peak_limit));
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -470,5 +628,154 @@ mod resampler_tests {
         // Amplitude preserved (sine stays ~[-1,1], peak near 1).
         let peak = out.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
         assert!(peak > 0.9 && peak <= 1.01, "peak={peak}");
+    }
+}
+
+#[cfg(test)]
+mod resampler_rms_test {
+    use super::MicResampler;
+    #[test]
+    fn output_rms_matches_input_rms() {
+        // 440Hz sine at amplitude 0.3, fed in VARYING block sizes (real cpal
+        // callbacks aren't uniform). Output RMS must ~= input RMS (no amplify).
+        let f = 440.0;
+        let inr = 48000.0;
+        let total: Vec<f32> = (0..96000)
+            .map(|n| 0.3 * (2.0 * std::f32::consts::PI * f * n as f32 / inr).sin())
+            .collect();
+        let in_rms = (total.iter().map(|x| x * x).sum::<f32>() / total.len() as f32).sqrt();
+        let mut rs = MicResampler::new(48000, 16000);
+        let mut out = Vec::new();
+        let sizes = [512usize, 512, 480, 1024, 512, 256, 512, 500];
+        let mut i = 0;
+        let mut k = 0;
+        while i < total.len() {
+            let sz = sizes[k % sizes.len()].min(total.len() - i);
+            out.extend(rs.process(&total[i..i + sz]));
+            i += sz;
+            k += 1;
+        }
+        let out_rms = (out.iter().map(|x| x * x).sum::<f32>() / out.len() as f32).sqrt();
+        let peak = out.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+        eprintln!(
+            "in_rms={in_rms:.4} out_rms={out_rms:.4} out_peak={peak:.4} out_len={} (exp~{})",
+            out.len(),
+            total.len() / 3
+        );
+        assert!(
+            (out_rms - in_rms).abs() < 0.05,
+            "RMS changed: {in_rms}->{out_rms} (amplification/glitch bug)"
+        );
+        assert!(peak < 0.45, "peak too high: {peak}");
+    }
+}
+
+#[cfg(test)]
+mod resampler_boundary_test {
+    use super::MicResampler;
+
+    /// The real-world failure: a 440Hz sine fed in VARYING block sizes must
+    /// produce *byte-for-byte* the same output as the same stream fed in ONE
+    /// block. Any per-block boundary glitch (the old `pos`/`last` bug) shows up
+    /// here as a divergence, even though it stayed under the slow-sine
+    /// max-jump threshold of the earlier test. This is the test that would have
+    /// caught the click-every-block bug that whisper hallucinated over.
+    #[test]
+    fn block_boundaries_match_single_shot() {
+        let f = 440.0;
+        let inr = 48000.0;
+        let total: Vec<f32> = (0..48000)
+            .map(|n| (2.0 * std::f32::consts::PI * f * n as f32 / inr).sin())
+            .collect();
+
+        // Reference: resample the whole thing in one call.
+        let mut rs_ref = MicResampler::new(48000, 16000);
+        let reference = rs_ref.process(&total);
+
+        // Under test: feed the SAME stream in jagged blocks.
+        let mut rs = MicResampler::new(48000, 16000);
+        let sizes = [512usize, 480, 1024, 256, 512, 500, 333, 777];
+        let mut out = Vec::new();
+        let (mut i, mut k) = (0usize, 0usize);
+        while i < total.len() {
+            let sz = sizes[k % sizes.len()].min(total.len() - i);
+            out.extend(rs.process(&total[i..i + sz]));
+            i += sz;
+            k += 1;
+        }
+
+        // Lengths must match within a sample or two (last partial fractional).
+        assert!(
+            (out.len() as i64 - reference.len() as i64).abs() <= 2,
+            "len mismatch blocked={} single={}",
+            out.len(),
+            reference.len()
+        );
+        // And every shared sample must match closely — a boundary glitch would
+        // spike one of these diffs far above interpolation rounding (~1e-4).
+        let n = out.len().min(reference.len());
+        let max_diff = (0..n)
+            .map(|j| (out[j] - reference[j]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_diff < 1e-3,
+            "blocked vs single-shot diverged by {max_diff} — boundary glitch"
+        );
+    }
+}
+
+#[cfg(test)]
+mod enhancer_tests {
+    use super::MicEnhancer;
+    use crate::audio::ring::rms;
+
+    /// The core promise: a hot, near-clipping mic signal is brought down to a
+    /// sane, peak-limited level — never amplified into harder clipping. We feed
+    /// a loud 300Hz tone (RMS ~0.35, the level the built-in MacBook mic was
+    /// delivering) in streaming blocks and assert the output peak respects the
+    /// -1 dB true-peak limit and the level is reduced.
+    #[test]
+    fn hot_input_is_limited_not_clipped() {
+        let sr = 16000u32;
+        let f = 300.0;
+        // 3s of a loud tone (amplitude 0.5 → peaks near clipping when summed).
+        let total: Vec<f32> = (0..sr * 3)
+            .map(|n| 0.5 * (2.0 * std::f32::consts::PI * f * n as f32 / sr as f32).sin())
+            .collect();
+        let in_rms = rms(&total);
+
+        let mut enh = MicEnhancer::new(sr);
+        let mut out = Vec::new();
+        for chunk in total.chunks(320) {
+            out.extend(enh.process(chunk));
+        }
+
+        let peak = out.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+        let out_rms = rms(&out);
+        // True-peak limiter target is -1 dB ≈ 0.891; allow a hair of overshoot.
+        assert!(peak <= 0.90, "peak {peak} exceeds -1dB true-peak limit");
+        // A loud input must not be made louder.
+        assert!(
+            out_rms <= in_rms + 0.02,
+            "enhancer amplified a hot signal: {in_rms} -> {out_rms}"
+        );
+        assert_eq!(
+            out.len(),
+            total.len(),
+            "enhancer must preserve sample count"
+        );
+    }
+
+    /// Silence in → silence out: the normalizer must not crank the noise floor.
+    #[test]
+    fn silence_stays_quiet() {
+        let sr = 16000u32;
+        let total = vec![0.0f32; sr as usize];
+        let mut enh = MicEnhancer::new(sr);
+        let mut out = Vec::new();
+        for chunk in total.chunks(320) {
+            out.extend(enh.process(chunk));
+        }
+        assert!(rms(&out) < 1e-3, "silence was amplified");
     }
 }

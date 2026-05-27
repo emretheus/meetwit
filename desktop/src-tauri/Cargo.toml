@@ -36,6 +36,9 @@ cpal = "0.15"
 hound = "3"
 parking_lot = "0.12"
 rubato = "0.15"
+# Mic loudness normalization (EBU R128 / -23 LUFS), ported from Meetily's
+# enhancement pipeline so hot/quiet/clipped mics still transcribe.
+ebur128 = "0.1"
 whisper-rs = { version = "0.13", default-features = false, features = ["metal", "coreml"] }
 # (Silero/ONNX VAD removed: ort 2.0-rc returned zero speech detections on real
 # audio in release builds. ASR now uses an RMS energy VAD — see asr/streamer.rs.)
