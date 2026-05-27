@@ -104,6 +104,11 @@ async def structured_completion(  # noqa: UP047 — TypeVar form is fine here
                 timeout=timeout,
             )
 
+    # Ollama 0.5+ accepts a full JSON Schema as `format`, which constrains the
+    # model to emit exactly that shape. This is far more reliable than free-form
+    # `"json"` for small local models — without it they hallucinate placeholder
+    # field values ("generate_text" tasks, echoed "Speaker" owners) or omit
+    # required keys. Mirrors the multi-provider path in providers.py.
     payload = {
         "model": model,
         "messages": [
@@ -111,7 +116,7 @@ async def structured_completion(  # noqa: UP047 — TypeVar form is fine here
             {"role": "user", "content": user},
         ],
         "stream": False,
-        "format": "json",
+        "format": schema_cls.model_json_schema(),
         "options": {"temperature": temperature},
     }
     async with httpx.AsyncClient(timeout=timeout) as client:
