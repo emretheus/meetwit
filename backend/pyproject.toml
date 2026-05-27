@@ -29,6 +29,9 @@ dependencies = [
     # LLM
     "ollama==0.4.*",
     "sse-starlette==2.1.*",
+    # MCP server — exposes meeting data to the user's own Claude Code over stdio
+    # (subscription, no API key). See meetwit/mcp_server.py.
+    "mcp==1.*",
 ]
 
 [project.optional-dependencies]
