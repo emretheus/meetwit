@@ -1,27 +1,22 @@
-//! Streaming ASR runner — Silero-VAD-segmented.
+//! Streaming ASR runner — energy-VAD-segmented.
 //!
 //! Design:
 //!
 //!   1. A background thread consumes 16 kHz mono samples from the mixer's
 //!      continuous output ring.
-//!   2. Samples are fed to a `silero::VadSession` which detects speech
-//!      onset and offset, emitting `VadTransition::SpeechEnd` events with
-//!      the complete buffered segment (including pre/post-roll padding).
-//!   3. Each `SpeechEnd` segment is handed to whisper in one call — no
-//!      sliding window, no overlap, therefore no risk of duplicated text.
+//!   2. An RMS energy VAD (threshold + hysteresis + silence hang time, the
+//!      same approach the mixer uses) groups the audio into speech bursts.
+//!   3. Each finalized burst is handed to whisper in one call — no sliding
+//!      window, no overlap, therefore no risk of duplicated text.
 //!   4. The resulting transcript is emitted as a single committed
 //!      `TranscriptSegment` event.
 //!
-//! VAD tuning:
+//! No partial-vs-final distinction; we wait for end-of-speech and transcribe
+//! the finalized burst. Simplest correct approach for live whisper.cpp.
 //!
-//!   * `positive_speech_threshold = 0.50`, `negative_speech_threshold = 0.35`
-//!   * `pre_speech_pad = 300 ms`, `post_speech_pad = 400 ms`
-//!   * `redemption_time = 700 ms`  (bridges natural pauses)
-//!   * `min_speech_time = 250 ms`  (drop tiny ums/ahs)
-//!
-//! No partial-vs-final distinction; Silero waits for end-of-speech and
-//! we transcribe the finalized segment. This is the simplest correct
-//! approach for live transcription with whisper.cpp.
+//! (V1 originally used Silero's neural VAD, but the `ort` 2.0-rc ONNX runtime
+//! returned zero detections on real speech in release builds — see git
+//! history. The energy VAD is lightweight with no native-model dependency.)
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,15 +24,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use silero::{VadConfig, VadSession, VadTransition};
 
 use super::engine::{DEFAULT_INITIAL_PROMPT, DecodeOptions, WhisperEngine};
-use crate::audio::ring::SampleRing;
+use crate::audio::ring::{SampleRing, rms};
 use crate::audio::wav::TARGET_SAMPLE_RATE;
 
-/// Silero processes audio in 30 ms frames at 16 kHz = 480 samples. We
-/// hand it whatever has accumulated in the ring on each iteration; the
-/// session re-frames internally.
+/// How often we drain the mixer ring and run segmentation.
 const POLL_INTERVAL_MS: u64 = 50;
 
 #[derive(Debug, Clone, Serialize)]
@@ -115,35 +107,143 @@ impl Drop for AsrStreamer {
     }
 }
 
-fn build_vad_config() -> VadConfig {
-    // Tuned VAD config. The struct exposes all knobs
-    // we care about; construct it directly so we don't depend on the
-    // upstream Default value drifting.
-    VadConfig {
-        sample_rate: TARGET_SAMPLE_RATE as usize,
-        positive_speech_threshold: 0.50,
-        negative_speech_threshold: 0.35,
-        pre_speech_pad: Duration::from_millis(300),
-        post_speech_pad: Duration::from_millis(400),
-        // Redemption time = how long Silero waits during silence before
-        // declaring speech "ended". Too short fragments mid-sentence
-        // ("Anybody?" / "dropped those?" / "into like orchestration..."
-        // each becoming separate turns); too long delays the first
-        // transcript appearing. 1200 ms is the sweet spot — it bridges
-        // typical inter-word and inter-clause pauses while still ending
-        // segments within ~1.5 s of someone genuinely stopping.
-        redemption_time: Duration::from_millis(1200),
-        min_speech_time: Duration::from_millis(250),
-    }
+// ─── Energy VAD segmenter ────────────────────────────────────────────────
+//
+// Groups the continuous mix into speech bursts using an RMS energy threshold
+// with hysteresis + a silence hang time — the same proven approach the mixer
+// uses. (We dropped the Silero/ONNX VAD: ort 2.0-rc produced zero detections
+// on real speech in release builds. The energy VAD is lightweight, has no
+// native-model dependency, and is what V1 was designed around.)
+
+/// Analysis window for RMS (~30 ms @ 16 kHz).
+const SEG_WINDOW: usize = (TARGET_SAMPLE_RATE as usize) / 33; // ≈485 samples
+/// RMS to ENTER speech. Real speech measures ~0.05-0.08; this sits well above
+/// typical room/mic ambient (~0.003-0.01) so noise doesn't latch us "on".
+const SEG_RMS_ON: f32 = 0.020;
+/// RMS to stay in speech (hysteresis). Inter-word/clause gaps fall below this,
+/// so we detect end-of-speech instead of staying latched through pauses.
+const SEG_RMS_OFF: f32 = 0.012;
+/// Consecutive sub-threshold windows before declaring speech ended. ~0.7 s
+/// bridges normal pauses but still cuts on real sentence breaks.
+const SEG_HANG_WINDOWS: u32 = 23;
+/// Minimum burst length to bother transcribing (drop tiny "um"s / clicks).
+const SEG_MIN_SPEECH_SECS: f64 = 0.4;
+/// Force-finalize a burst this long even without a pause. Kept short: whisper
+/// hallucinates ("Thank you.", "You") on long blobs that are mostly noise, and
+/// chunks ≤~10 s transcribe far more reliably for live use.
+const MAX_SPEECH_SECS: f64 = 10.0;
+
+/// A finalized speech burst ready to transcribe.
+struct SpeechBurst {
+    start_seconds: f64,
+    samples: Vec<f32>,
 }
 
-/// Hard cap on a single in-flight speech burst (seconds). If Silero hasn't
-/// emitted `SpeechEnd` within this window we force-finalize the buffered
-/// audio so the user sees *something* on screen, then reset the VAD session
-/// for the next burst. Real-world continuous speech rarely exceeds 20 s
-/// without a >400 ms pause, so this only kicks in for genuinely unbroken
-/// monologues (or noise hallucinated as speech).
-const MAX_SPEECH_SECS: f64 = 20.0;
+/// Energy-threshold speech segmenter. Fed arbitrary-length frames; emits a
+/// `SpeechBurst` whenever a speech run ends (after the hang gap) or hits the
+/// max length.
+struct EnergySegmenter {
+    pending: Vec<f32>, // leftover samples < one window
+    in_speech: bool,
+    buf: Vec<f32>,    // current burst's samples
+    burst_start: f64, // origin seconds of the current burst
+    silent_windows: u32,
+}
+
+impl EnergySegmenter {
+    fn new() -> Self {
+        Self {
+            pending: Vec::with_capacity(SEG_WINDOW * 2),
+            in_speech: false,
+            buf: Vec::new(),
+            burst_start: 0.0,
+            silent_windows: 0,
+        }
+    }
+
+    fn in_speech(&self) -> bool {
+        self.in_speech
+    }
+
+    fn buffered_seconds(&self) -> f64 {
+        self.buf.len() as f64 / f64::from(TARGET_SAMPLE_RATE)
+    }
+
+    /// Feed a frame (origin_seconds = meeting time at the START of this frame).
+    /// Returns any bursts that finalized during this frame.
+    fn push(&mut self, frame: &[f32], origin_seconds: f64) -> Vec<SpeechBurst> {
+        let mut out = Vec::new();
+        self.pending.extend_from_slice(frame);
+
+        // How many whole windows we have; track time precisely from origin.
+        let mut win_idx = 0usize;
+        while self.pending.len() >= SEG_WINDOW * (win_idx + 1) {
+            let start = win_idx * SEG_WINDOW;
+            let window = &self.pending[start..start + SEG_WINDOW];
+            let window_secs = SEG_WINDOW as f64 / f64::from(TARGET_SAMPLE_RATE);
+            let win_origin = origin_seconds + (win_idx as f64) * window_secs;
+            let level = rms(window);
+
+            if self.in_speech {
+                self.buf.extend_from_slice(window);
+                if level < SEG_RMS_OFF {
+                    self.silent_windows += 1;
+                    if self.silent_windows >= SEG_HANG_WINDOWS {
+                        if let Some(b) = self.finalize() {
+                            out.push(b);
+                        }
+                    }
+                } else {
+                    self.silent_windows = 0;
+                }
+                // Force-cut a too-long burst so the UI still updates.
+                if self.in_speech && self.buffered_seconds() >= MAX_SPEECH_SECS {
+                    if let Some(b) = self.finalize() {
+                        out.push(b);
+                    }
+                }
+            } else if level > SEG_RMS_ON {
+                // Speech onset.
+                self.in_speech = true;
+                self.silent_windows = 0;
+                self.burst_start = win_origin;
+                self.buf.clear();
+                self.buf.extend_from_slice(window);
+            }
+            win_idx += 1;
+        }
+        // Drop the consumed whole windows, keep the remainder.
+        let consumed = win_idx * SEG_WINDOW;
+        if consumed > 0 {
+            self.pending.drain(0..consumed);
+        }
+        out
+    }
+
+    /// End the current burst (if long enough) and reset speech state.
+    fn finalize(&mut self) -> Option<SpeechBurst> {
+        self.in_speech = false;
+        self.silent_windows = 0;
+        let samples = std::mem::take(&mut self.buf);
+        let dur = samples.len() as f64 / f64::from(TARGET_SAMPLE_RATE);
+        if dur < SEG_MIN_SPEECH_SECS {
+            return None;
+        }
+        Some(SpeechBurst {
+            start_seconds: self.burst_start,
+            samples,
+        })
+    }
+
+    /// Flush any in-progress speech (called on stop).
+    fn flush(&mut self, _origin_seconds: f64) -> Option<SpeechBurst> {
+        if self.in_speech {
+            self.finalize()
+        } else {
+            None
+        }
+    }
+}
 
 fn run<F>(
     engine: Arc<WhisperEngine>,
@@ -157,13 +257,11 @@ where
     F: Fn(StreamerEvent) + Send + 'static,
 {
     let extra_prompt = extra_prompt.filter(|s| !s.trim().is_empty());
-    let mut vad = VadSession::new(build_vad_config())
-        .map_err(|e| anyhow::anyhow!("silero init failed: {e}"))?;
-    log::info!("asr.streamer started — silero VAD initialised");
+    log::info!("asr.streamer started — energy VAD segmenter");
 
+    let mut seg = EnergySegmenter::new();
     let mut audio_origin_seconds: f64 = 0.0;
     let mut last_status_log = Instant::now();
-    let mut speech_start_origin: Option<f64> = None;
     // Rolling context: the tail of the most recently emitted transcript.
     // Fed back into whisper as `initial_prompt` for the next segment so
     // proper-noun spellings stay consistent across the meeting and the
@@ -177,110 +275,63 @@ where
             thread::sleep(poll);
             continue;
         }
-        let frame_secs = frame.len() as f64 / f64::from(TARGET_SAMPLE_RATE);
 
-        let transitions = match vad.process(&frame) {
-            Ok(t) => t,
-            Err(err) => {
-                log::warn!("silero process error: {err}");
-                audio_origin_seconds += frame_secs;
+        // Feed the frame to the energy segmenter. It returns a finalized speech
+        // burst (start_seconds, samples) whenever speech ends after a hang
+        // gap, or when the burst exceeds MAX_SPEECH_SECS.
+        for burst in seg.push(&frame, audio_origin_seconds) {
+            if burst.samples.is_empty() {
                 continue;
             }
-        };
-
-        for transition in transitions {
-            match transition {
-                VadTransition::SpeechStart { timestamp_ms } => {
-                    log::debug!("vad.speech_start t={timestamp_ms}ms");
-                    speech_start_origin = Some(audio_origin_seconds);
-                }
-                VadTransition::SpeechEnd {
-                    start_timestamp_ms,
-                    end_timestamp_ms,
-                    samples,
-                } => {
-                    let dur_secs = (end_timestamp_ms - start_timestamp_ms) as f64 / 1000.0;
-                    // The Silero `*_timestamp_ms` values are relative to the VAD
-                    // SESSION's own clock, which resets whenever we re-init the
-                    // session (see force-cut below) — using them directly made
-                    // every segment land at ~0:00. The real meeting-relative
-                    // timestamp is the cumulative `audio_origin_seconds` we
-                    // captured at SpeechStart. Fall back to deriving it from the
-                    // current origin minus the segment duration if we somehow
-                    // missed the SpeechStart.
-                    let seg_start =
-                        speech_start_origin.unwrap_or((audio_origin_seconds - dur_secs).max(0.0));
-                    let seg_end = seg_start + dur_secs;
-                    speech_start_origin = None;
-                    if samples.is_empty() {
-                        continue;
-                    }
-                    log::info!(
-                        "vad.speech_end origin_start={seg_start:.2}s origin_end={seg_end:.2}s \
-                         dur={dur_secs:.2}s samples={}",
-                        samples.len()
-                    );
-                    if let Some(emitted) = transcribe_and_emit(
-                        &engine,
-                        &samples,
-                        seg_start,
-                        seg_end,
-                        &on_event,
-                        &prev_text,
-                        &language,
-                        extra_prompt.as_deref(),
-                    ) {
-                        prev_text = emitted;
-                    }
-                }
-            }
-        }
-
-        audio_origin_seconds += frame_secs;
-
-        // Safety net: if we've been buffering speech for too long without a
-        // SpeechEnd (e.g. user is reading nonstop), force-finalise so the
-        // UI gets a transcript and the buffer doesn't grow unboundedly.
-        if let Some(start) = speech_start_origin
-            && audio_origin_seconds - start >= MAX_SPEECH_SECS
-        {
-            let buffered = vad.get_current_speech().to_vec();
-            let end_origin = audio_origin_seconds;
-            log::warn!(
-                "vad.force_cut speech_dur={:.2}s samples={} — exceeded MAX_SPEECH_SECS",
-                end_origin - start,
-                buffered.len()
+            let seg_end =
+                burst.start_seconds + burst.samples.len() as f64 / f64::from(TARGET_SAMPLE_RATE);
+            log::info!(
+                "vad.speech_end origin_start={:.2}s origin_end={:.2}s samples={}",
+                burst.start_seconds,
+                seg_end,
+                burst.samples.len()
             );
-            if !buffered.is_empty() {
-                if let Some(emitted) = transcribe_and_emit(
-                    &engine,
-                    &buffered,
-                    start,
-                    end_origin,
-                    &on_event,
-                    &prev_text,
-                    &language,
-                    extra_prompt.as_deref(),
-                ) {
-                    prev_text = emitted;
-                }
+            if let Some(emitted) = transcribe_and_emit(
+                &engine,
+                &burst.samples,
+                burst.start_seconds,
+                seg_end,
+                &on_event,
+                &prev_text,
+                &language,
+                extra_prompt.as_deref(),
+            ) {
+                prev_text = emitted;
             }
-            // Reset Silero so its internal buffer is empty. Without this,
-            // the buffer keeps growing and we'd re-fire force_cut every
-            // poll until SpeechEnd, producing duplicates (the old bug).
-            vad = VadSession::new(build_vad_config())
-                .map_err(|e| anyhow::anyhow!("silero re-init failed: {e}"))?;
-            speech_start_origin = None;
         }
+
+        audio_origin_seconds += frame.len() as f64 / f64::from(TARGET_SAMPLE_RATE);
 
         if last_status_log.elapsed() > Duration::from_secs(10) {
-            let buffered_secs =
-                vad.get_current_speech().len() as f64 / f64::from(TARGET_SAMPLE_RATE);
             log::debug!(
-                "asr.status origin={audio_origin_seconds:.1}s speaking={} buffered_speech={buffered_secs:.2}s",
-                vad.is_speaking()
+                "asr.status origin={audio_origin_seconds:.1}s speaking={} buffered={:.2}s",
+                seg.in_speech(),
+                seg.buffered_seconds()
             );
             last_status_log = Instant::now();
+        }
+    }
+
+    // Flush any in-progress speech on stop so the last utterance isn't lost.
+    if let Some(burst) = seg.flush(audio_origin_seconds) {
+        if !burst.samples.is_empty() {
+            let seg_end =
+                burst.start_seconds + burst.samples.len() as f64 / f64::from(TARGET_SAMPLE_RATE);
+            transcribe_and_emit(
+                &engine,
+                &burst.samples,
+                burst.start_seconds,
+                seg_end,
+                &on_event,
+                &prev_text,
+                &language,
+                extra_prompt.as_deref(),
+            );
         }
     }
 
