@@ -33,10 +33,9 @@ import {
   ToolbarDivider,
   ToolbarSpacer,
 } from '@/components/ui';
-import { InsightsPanel } from '@/components/InsightsPanel';
 import { MeetingCopilot } from '@/components/MeetingCopilot';
 import { LiveNotesPanel } from '@/components/LiveNotesPanel';
-import { TerminalPanel } from '@/components/TerminalPanel';
+import { ClaudeTerminalSlot } from '@/components/ClaudeTerminalHost';
 import { toast } from '@/components/ToastStack';
 import { getPrefs } from '@/lib/prefs';
 import { formatTime, groupSegmentsIntoTurns } from '@/lib/transcript';
@@ -78,6 +77,15 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
   const [rightTab, setRightTab] = useState<'copilot' | 'notes' | 'claude'>('copilot');
   // Opt-in "Claude Code" tab (read once; Settings change takes effect on reopen).
   const [claudeCodeEnabled] = useState(() => getPrefs().claudeCodeEnabled);
+  // The terminal itself lives app-level (ClaudeTerminalHost) so it survives route
+  // changes; here we just tell the store when the Claude tab is the active view,
+  // and host a slot the shared terminal node is re-parented into.
+  const setClaudeTabActive = useMeetingStore((s) => s.setClaudeTabActive);
+  useEffect(() => {
+    setClaudeTabActive(rightTab === 'claude');
+  }, [rightTab, setClaudeTabActive]);
+  // When this view unmounts (route change), don't leave the tab "active".
+  useEffect(() => () => setClaudeTabActive(false), [setClaudeTabActive]);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -236,7 +244,6 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
               {formatElapsed(elapsedMs)}
             </span>
           )}
-          {meeting && <InsightsPanel />}
           {meeting && !running && (
             <Link
               to="/meeting/$id/summary"
@@ -405,7 +412,10 @@ export function LiveMeetingView({ showBack = false }: LiveMeetingViewProps) {
               elapsedSeconds={elapsedMs !== null ? elapsedMs / 1000 : null}
             />
           )}
-          {rightTab === 'claude' && claudeCodeEnabled && <TerminalPanel autoClaude />}
+          {/* The terminal node is app-level (ClaudeTerminalHost) and gets
+              re-parented into this slot while the tab is active — so the live
+              `claude` session survives tab AND route changes. */}
+          {claudeCodeEnabled && rightTab === 'claude' && <ClaudeTerminalSlot />}
         </aside>
       </div>
     </div>

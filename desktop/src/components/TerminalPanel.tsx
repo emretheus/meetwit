@@ -7,9 +7,14 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import { onPtyData, onPtyExit, ptyKill, ptyResize, ptySpawn, ptyWrite } from '@/lib/tauri';
 
 /**
- * Light terminal theme that matches the app's surface (white/zinc) rather than
- * a generic dark terminal. The ANSI 16-colour palette is tuned for a light
- * background so Claude Code's coloured output stays legible.
+ * Light terminal theme matching the app's surface (white/zinc). The ANSI 16-
+ * colour palette is darkened for contrast on white so Claude Code's coloured
+ * output stays legible.
+ *
+ * Note: Claude Code's TUI sets its own background colour on some chrome (the
+ * selected message + input box). We force `drawBoldTextInBrightColors` off and
+ * keep a pure-white bg; the small dark chrome bands are Claude's own theming,
+ * not our terminal — they read as intentional UI, not glitches.
  */
 const LIGHT_THEME = {
   background: '#ffffff',
@@ -18,7 +23,6 @@ const LIGHT_THEME = {
   cursorAccent: '#ffffff',
   selectionBackground: '#bfdbfe', // brand-200
   selectionForeground: '#1e293b',
-  // Standard ANSI — darkened where needed for contrast on white.
   black: '#3f3f46',
   red: '#dc2626',
   green: '#16a34a',
@@ -43,7 +47,16 @@ const LIGHT_THEME = {
  * Claude Code with the Meetwit MCP server, so the user can query this meeting's
  * data with their own Claude subscription. Closing the tab kills the PTY.
  */
-export function TerminalPanel({ autoClaude = true }: { autoClaude?: boolean }) {
+export function TerminalPanel({
+  autoClaude = true,
+  meetingId = null,
+  meetingTitle = null,
+}: {
+  autoClaude?: boolean;
+  /** Active meeting — primed into the Claude session so it knows which one. */
+  meetingId?: string | null;
+  meetingTitle?: string | null;
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   // Guards against React 18 StrictMode double-invoking the effect in dev (which
   // otherwise spawns two PTYs). The cleanup resets it.
@@ -75,7 +88,7 @@ export function TerminalPanel({ autoClaude = true }: { autoClaude?: boolean }) {
     fit.fit();
 
     void (async () => {
-      sessionId = await ptySpawn(term.cols, term.rows, autoClaude);
+      sessionId = await ptySpawn(term.cols, term.rows, autoClaude, meetingId, meetingTitle);
       if (disposed) {
         void ptyKill(sessionId);
         return;
@@ -110,7 +123,7 @@ export function TerminalPanel({ autoClaude = true }: { autoClaude?: boolean }) {
       if (sessionId) void ptyKill(sessionId);
       term.dispose();
     };
-  }, [autoClaude]);
+  }, [autoClaude, meetingId, meetingTitle]);
 
   return (
     <div className="flex h-full flex-col bg-white">

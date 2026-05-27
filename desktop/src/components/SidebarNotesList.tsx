@@ -21,7 +21,7 @@ import {
   type Meeting,
 } from '@/lib/backend';
 import { useBackendReady } from '@/lib/useBackendReady';
-import { useMeeting } from '@/stores/meetingStore';
+import { useMeeting, useRunning } from '@/stores/meetingStore';
 import { toast } from '@/components/ToastStack';
 import { Modal } from '@/components/modals/Modal';
 import { Button } from '@/components/ui';
@@ -52,6 +52,7 @@ export function SidebarNotesList() {
   });
   const { ready } = useBackendReady();
   const activeMeeting = useMeeting();
+  const running = useRunning();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -343,7 +344,12 @@ export function SidebarNotesList() {
   );
 
   function renderMeeting(m: Meeting) {
-    const isActive = location.pathname === `/meeting/${m.id}/summary` || activeMeeting?.id === m.id;
+    // Two distinct states that previously collapsed into one highlight (which is
+    // why both the viewed AND the recording meeting lit up):
+    //   - isViewing: this meeting's page is on screen → "selected" highlight.
+    //   - isRecording: this is the live recording → a small red dot, not a bg.
+    const isViewing = location.pathname === `/meeting/${m.id}/summary`;
+    const isRecording = running && activeMeeting?.id === m.id;
 
     if (renamingId === m.id) {
       return (
@@ -370,12 +376,19 @@ export function SidebarNotesList() {
           to="/meeting/$id/summary"
           params={{ id: m.id }}
           className={[
-            'flex items-center gap-1 rounded-lg py-2 pl-3 pr-1 text-[13px] font-medium transition-colors',
-            isActive
+            'flex items-center gap-1.5 rounded-lg py-2 pl-3 pr-1 text-[13px] font-medium transition-colors',
+            isViewing
               ? 'shadow-xs bg-white text-zinc-900 ring-1 ring-zinc-200'
               : 'text-zinc-600 hover:bg-white/70 hover:text-zinc-900',
           ].join(' ')}
         >
+          {isRecording && (
+            <span
+              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-red-500"
+              title="Recording"
+              aria-label="Recording"
+            />
+          )}
           <span className="min-w-0 flex-1 truncate">{m.title ?? 'Untitled meeting'}</span>
           <button
             type="button"

@@ -101,17 +101,47 @@ fn shell_quote(s: &str) -> String {
 }
 
 /// One-shot bootstrap typed into the shell when auto-launch is on: register the
-/// Meetwit MCP server with Claude Code (idempotent, user scope), then run it.
+/// Meetwit MCP server with Claude Code (idempotent, user scope), then launch it
+/// with an initial prompt that primes the *current meeting* as context (so the
+/// session can answer "summarize so far" without first guessing which meeting).
 /// If `claude` isn't installed, the `command -v` guard prints guidance instead.
-fn bootstrap_script() -> String {
+fn bootstrap_script(meeting_id: Option<&str>, meeting_title: Option<&str>) -> String {
     let mcp = mcp_command();
+
+    // Build the initial prompt that orients Claude to the active meeting and the
+    // meetwit MCP tools. Single-quoted for the shell; escape embedded quotes.
+    let prompt = match meeting_id {
+        Some(id) => {
+            let title = meeting_title.unwrap_or("Untitled meeting");
+            format!(
+                "You're assisting during a LIVE, in-progress meeting in Meetwit. The active \
+                 meeting is \"{title}\" (id: {id}). Use the `meetwit` MCP tools for THIS meeting; \
+                 don't ask which meeting — it's this one.\n\n\
+                 IMPORTANT: the meeting is still recording, so a stored summary usually doesn't \
+                 exist yet. For \"summarize so far\" / \"what's been said\" / \"catch me up\" type \
+                 questions, read get_transcript(\"{id}\") and answer from it directly — do NOT call \
+                 get_summary first (only use get_summary if the user explicitly asks for the saved \
+                 post-meeting summary). Other tools: list_decisions(\"{id}\"), \
+                 list_action_items(\"{id}\"), and search_documents for the user's indexed docs.\n\n\
+                 Briefly confirm you're connected and ready, then wait for the user's question."
+            )
+        }
+        // No meeting open yet — still orient Claude to the tools.
+        None => "You're assisting in Meetwit. Use the `meetwit` MCP tools (list_meetings, \
+             get_transcript, get_summary, list_decisions, list_action_items, search_documents) \
+             to answer questions about the user's meetings and indexed documents."
+            .to_string(),
+    };
+    let prompt_quoted = shell_quote(&prompt);
+
     // `claude mcp add` is idempotent enough for our use; we tolerate its error
-    // (e.g. "already exists") via `|| true`, then launch claude. The guard keeps
-    // a missing CLI from dumping a scary error.
+    // (e.g. "already exists") via `|| true`, then launch claude WITH the priming
+    // prompt as its first message. The guard keeps a missing CLI from dumping a
+    // scary error.
     format!(
         "if command -v claude >/dev/null 2>&1; then \
            claude mcp add meetwit --scope user -- {mcp} >/dev/null 2>&1 || true; \
-           clear; claude; \
+           clear; claude {prompt_quoted}; \
          else \
            printf '\\n  Claude Code is not installed.\\n  Install it from https://docs.claude.com/claude-code then reopen this tab.\\n\\n'; \
          fi\n"
@@ -125,8 +155,19 @@ pub fn pty_spawn(
     cols: u16,
     rows: u16,
     auto_claude: bool,
+    meeting_id: Option<String>,
+    meeting_title: Option<String>,
 ) -> Result<String, String> {
-    spawn_inner(app, &state, cols, rows, auto_claude).map_err(|e| e.to_string())
+    spawn_inner(
+        app,
+        &state,
+        cols,
+        rows,
+        auto_claude,
+        meeting_id,
+        meeting_title,
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn spawn_inner(
@@ -135,6 +176,8 @@ fn spawn_inner(
     cols: u16,
     rows: u16,
     auto_claude: bool,
+    meeting_id: Option<String>,
+    meeting_title: Option<String>,
 ) -> Result<String> {
     let session_id = format!("pty-{}", uuid_like());
     let pty_system = NativePtySystem::default();
@@ -201,9 +244,10 @@ fn spawn_inner(
         reader_alive,
     };
 
-    // Kick off the bootstrap (register MCP + launch claude) when requested.
+    // Kick off the bootstrap (register MCP + launch claude with meeting context).
     if auto_claude {
-        let _ = session.writer.write_all(bootstrap_script().as_bytes());
+        let script = bootstrap_script(meeting_id.as_deref(), meeting_title.as_deref());
+        let _ = session.writer.write_all(script.as_bytes());
         let _ = session.writer.flush();
     }
 
