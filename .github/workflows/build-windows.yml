@@ -1,0 +1,127 @@
+name: Release (Windows)
+
+# Builds the Windows installers (.msi + NSIS .exe) with a bundled PyInstaller
+# sidecar. Vulkan-accelerated whisper (Meetily's Windows default), CPU fallback
+# if no GPU at runtime. Currently UNSIGNED — SmartScreen will warn until an
+# Authenticode certificate is wired in (see the "signing" TODO below).
+#
+# Triggers:
+#   - push a tag like `v1.0.0`  → build + attach installers to the GitHub Release
+#   - manual dispatch           → build artifact only
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Meetwit installer (x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write # attach installers to the GitHub Release on a tag
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> ../../target
+
+      # whisper-rs builds whisper.cpp from source via bindgen → needs LLVM/clang.
+      - name: Install LLVM (for whisper-rs bindgen)
+        run: choco install llvm --no-progress -y
+      - name: Expose LLVM to bindgen
+        shell: pwsh
+        run: |
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
+      # Vulkan SDK provides the headers/loader whisper-rs/vulkan links against.
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.3.290.0
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install Python toolchain
+        run: uv python install 3.13
+
+      - name: Install Python deps
+        working-directory: backend
+        run: uv sync --extra dev
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # Build the Windows sidecar (.exe inside the --onedir bundle).
+      - name: Build sidecar (PyInstaller --onedir)
+        working-directory: backend
+        run: uv run pyinstaller meetwit-sidecar.spec --noconfirm --clean
+
+      - name: Stage sidecar bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path desktop/src-tauri/binaries | Out-Null
+          $dest = "desktop/src-tauri/binaries/python-backend"
+          if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+          Copy-Item -Recurse backend/dist/meetwit-sidecar $dest
+
+      - name: Build Tauri installers (.msi + NSIS)
+        run: pnpm tauri:build
+
+      # Cargo workspace → bundles land in the workspace-root target/.
+      - name: Collect installers
+        id: collect
+        shell: pwsh
+        run: |
+          $out = "dist-installers"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Get-ChildItem -Recurse target/release/bundle -Include *.msi, *-setup.exe |
+            ForEach-Object { Copy-Item $_.FullName $out }
+          Get-ChildItem $out
+          # Fail fast if nothing was produced.
+          if (-not (Get-ChildItem $out)) { throw "no installers found under target/release/bundle" }
+
+      - name: Checksums
+        shell: pwsh
+        working-directory: dist-installers
+        run: |
+          Get-ChildItem | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)" | Out-File "$($_.Name).sha256" -Encoding ascii
+          }
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Meetwit-windows-x64
+          path: dist-installers/*
+          retention-days: 14
+
+      - name: Attach to GitHub Release
+        if: ${{ github.ref_type == 'tag' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-installers/*
+          draft: true
+          body: |
+            Windows build (x64). **Unsigned** — Windows SmartScreen may warn;
+            click *More info → Run anyway*. Verify the download with the
+            published SHA-256.

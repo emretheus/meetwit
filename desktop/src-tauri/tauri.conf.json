@@ -32,10 +32,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "app"],
+    "targets": "all",
     "category": "Productivity",
-    "shortDescription": "Privacy-first AI meeting assistant for macOS.",
-    "longDescription": "Meetwit listens to live meetings, indexes your local company documents, and answers questions in real time using both. Everything runs locally on your Mac.",
+    "shortDescription": "Privacy-first AI meeting assistant.",
+    "longDescription": "Meetwit listens to live meetings, indexes your local company documents, and answers questions in real time using both. Everything runs locally on your machine.",
     "copyright": "© 2026 Meetwit contributors",
     "icon": [
       "icons/32x32.png",
@@ -54,6 +54,9 @@
       "exceptionDomain": null,
       "signingIdentity": null,
       "providerShortName": null
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" }
     }
   }
 }

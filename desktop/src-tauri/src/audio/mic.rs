@@ -376,7 +376,9 @@ fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
 /// sample + a fractional read position between calls) can't drop or glitch
 /// samples and is plenty for speech downsampling. This mirrors Meetily's
 /// (working) resampler.
-struct MicResampler {
+// `pub(crate)` so the Windows system-audio loopback backend (audio::system)
+// can reuse the same glitch-free resampler instead of duplicating it.
+pub(crate) struct MicResampler {
     ratio: f64,   // out_rate / in_rate
     last: f32,    // the previous block's final input sample (history sample at index -1)
     pos: f64,     // fractional read position, in input-sample units, relative to THIS block's start
@@ -384,7 +386,7 @@ struct MicResampler {
 }
 
 impl MicResampler {
-    fn new(in_rate: u32, out_rate: u32) -> Self {
+    pub(crate) fn new(in_rate: u32, out_rate: u32) -> Self {
         Self {
             ratio: f64::from(out_rate) / f64::from(in_rate),
             last: 0.0,
@@ -404,7 +406,7 @@ impl MicResampler {
     /// block we subtract its length from `pos`, leaving it relative to the
     /// *next* block — and crucially clamp `pos >= -1` so we never index before
     /// the single history sample we keep.
-    fn process(&mut self, input: &[f32]) -> Vec<f32> {
+    pub(crate) fn process(&mut self, input: &[f32]) -> Vec<f32> {
         if input.is_empty() {
             return Vec::new();
         }

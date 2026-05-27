@@ -52,10 +52,15 @@ impl SpawnOptions {
         }
     }
 
-    /// Release-mode: invoke the PyInstaller binary bundled inside the .app at
-    /// `Contents/Resources/python-backend/meetwit-sidecar`.
+    /// Release-mode: invoke the PyInstaller binary bundled in the app's
+    /// resources at `python-backend/meetwit-sidecar` (`.exe` on Windows).
     pub fn release(resources_dir: &std::path::Path) -> Self {
-        let exe = resources_dir.join("python-backend").join("meetwit-sidecar");
+        let bin = if cfg!(target_os = "windows") {
+            "meetwit-sidecar.exe"
+        } else {
+            "meetwit-sidecar"
+        };
+        let exe = resources_dir.join("python-backend").join(bin);
         Self {
             port: AUTO_PORT,
             working_dir: None,
