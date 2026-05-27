@@ -318,3 +318,45 @@ export async function apikeyGet(provider: string): Promise<string | null> {
 export async function apikeyDelete(provider: string): Promise<void> {
   return invoke<void>('apikey_delete', { provider });
 }
+
+// ─── Embedded terminal — the "Claude Code" tab ──────────────────────────
+
+/** Open a PTY (sized cols×rows). When autoClaude, bootstraps + launches claude. Returns a session id. */
+export async function ptySpawn(cols: number, rows: number, autoClaude: boolean): Promise<string> {
+  return invoke<string>('pty_spawn', { cols, rows, autoClaude });
+}
+
+/** Forward keystrokes / paste data to the PTY. */
+export async function ptyWrite(sessionId: string, data: string): Promise<void> {
+  return invoke<void>('pty_write', { sessionId, data });
+}
+
+/** Resize the PTY (on xterm fit). */
+export async function ptyResize(sessionId: string, cols: number, rows: number): Promise<void> {
+  return invoke<void>('pty_resize', { sessionId, cols, rows });
+}
+
+/** Kill a PTY session (closes the shell + reader). */
+export async function ptyKill(sessionId: string): Promise<void> {
+  return invoke<void>('pty_kill', { sessionId });
+}
+
+/** True if Claude Code (`claude`) is installed on PATH. */
+export async function claudeAvailable(): Promise<boolean> {
+  return invoke<boolean>('claude_available');
+}
+
+export interface PtyData {
+  session_id: string;
+  data: string;
+}
+
+/** Subscribe to PTY output chunks. */
+export async function onPtyData(handler: (e: PtyData) => void): Promise<UnlistenFn> {
+  return listen<PtyData>('pty://data', (e) => handler(e.payload));
+}
+
+/** Subscribe to PTY exit (shell closed). */
+export async function onPtyExit(handler: (sessionId: string) => void): Promise<UnlistenFn> {
+  return listen<{ session_id: string }>('pty://exit', (e) => handler(e.payload.session_id));
+}

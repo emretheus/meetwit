@@ -4,6 +4,7 @@ mod asr;
 mod audio;
 mod calendar;
 mod commands;
+mod pty;
 mod sidecar;
 mod state;
 
@@ -112,6 +113,11 @@ pub fn run() {
             commands::calendar_disconnect,
             commands::detection_set_enabled,
             commands::detection_set_calendar_nudge,
+            pty::pty_spawn,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_kill,
+            pty::claude_available,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

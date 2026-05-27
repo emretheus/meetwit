@@ -31,6 +31,10 @@ export interface UserPrefs {
   transcriptionLanguage: string;
   /** Sidebar meeting grouping (#424). */
   sidebarGroupBy: 'none' | 'folder' | 'project';
+  /** Opt-in "Claude Code" tab: an embedded terminal that runs the user's own
+   *  Claude Code (their subscription) with the Meetwit MCP server. Off by
+   *  default — it sends meeting data to Anthropic via the user's Claude session. */
+  claudeCodeEnabled: boolean;
 }
 
 export const PREFS_KEY = 'meetwit:prefs';
@@ -52,6 +56,7 @@ export function defaultPrefs(): UserPrefs {
     domainVocabulary: '',
     transcriptionLanguage: 'en',
     sidebarGroupBy: 'none',
+    claudeCodeEnabled: false,
   };
 }
 
