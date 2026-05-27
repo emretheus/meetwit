@@ -76,12 +76,6 @@ jobs:
         shell: pwsh
         run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
 
-      - name: Install Vulkan SDK
-        uses: humbletim/install-vulkan-sdk@v1.2
-        with:
-          version: 1.3.290.0
-          cache: true
-
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
@@ -94,9 +88,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path desktop/dist | Out-Null
           '<!doctype html><title>stub</title>' | Out-File desktop/dist/index.html -Encoding utf8
 
-      # Compile-check only — catches cfg(windows) / WASAPI-loopback code errors
-      # that the macOS host can't (cross-compiling stalls on C deps like ring).
-      - name: cargo check (Windows)
+      # Default (CPU) compile-check — catches cfg(windows)/WASAPI-loopback errors
+      # the macOS host can't (cross-compiling stalls on C deps like ring). No
+      # Vulkan SDK needed: the default build is CPU; the GPU feature is verified
+      # in the release workflow's vulkan matrix variant.
+      - name: cargo check (Windows, CPU default)
         run: cargo check --workspace --all-targets
 
   python:
