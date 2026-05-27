@@ -439,8 +439,10 @@ export async function llmRequestConfig(): Promise<LlmRequestConfig> {
   } catch {
     /* defaults */
   }
+  // `ollama` (local) and `claude-code` (local CLI on the user's subscription)
+  // are keyless; only the BYOK cloud providers fetch a key from the Keychain.
   let apiKey: string | null = null;
-  if (provider !== 'ollama') {
+  if (provider !== 'ollama' && provider !== 'claude-code') {
     try {
       const { apikeyGet } = await import('@/lib/tauri');
       apiKey = await apikeyGet(provider);

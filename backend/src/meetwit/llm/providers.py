@@ -21,8 +21,11 @@ one code path.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import ipaddress
 import json
+import shutil
 import socket
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -96,7 +99,7 @@ def _validate_base_url(raw: str) -> str:
 
 T = TypeVar("T", bound=BaseModel)
 
-Provider = Literal["ollama", "openai", "groq", "openrouter", "custom", "anthropic"]
+Provider = Literal["ollama", "openai", "groq", "openrouter", "custom", "anthropic", "claude-code"]
 
 # OpenAI-compatible providers share one request/response shape. Anthropic and
 # Ollama are special-cased.
@@ -139,7 +142,10 @@ class LlmConfig:
             base_url=self.base_url,
             temperature=self.temperature,
         )
-        if cfg.provider != "ollama" and not (cfg.api_key or "").strip():
+        # Cloud providers need a key; without one we degrade to local Ollama so
+        # the app never hard-fails. `claude-code` is exempt — it's keyless by
+        # design (runs the local `claude` CLI on the user's subscription).
+        if cfg.provider not in ("ollama", "claude-code") and not (cfg.api_key or "").strip():
             log.info("llm.fallback_to_ollama", from_provider=cfg.provider)
             cfg = LlmConfig(provider="ollama", model=self.model, base_url=ollama_url)
         if cfg.provider == "ollama" and not cfg.base_url:
@@ -154,6 +160,7 @@ class LlmConfig:
         models — callers turn that into a clear UI error instead of hanging.
         """
         cfg = self.with_defaults(ollama_url=ollama_url)
+        # Only Ollama needs the installed-model check; cloud + claude-code don't.
         if cfg.provider != "ollama":
             return cfg
         cfg.model = await resolve_ollama_model(cfg.model, base_url=cfg.base_url or ollama_url)
@@ -310,9 +317,13 @@ async def structured_complete(  # noqa: UP047 — TypeVar form mirrors structure
             )
         elif cfg.provider == "anthropic":
             content = await _anthropic_json(cfg, system, user, timeout=timeout)
+        elif cfg.provider == "claude-code":
+            content = await _claude_code_json(
+                cfg, system, user, timeout=timeout, schema=schema_cls.model_json_schema()
+            )
         else:
             content = await _openai_json(cfg, system, user, timeout=timeout)
-    except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+    except (httpx.RequestError, httpx.HTTPStatusError, ClaudeCodeError) as exc:
         log.warning("llm.structured_request_failed", provider=cfg.provider, err=str(exc))
         return schema_cls()
 
@@ -512,6 +523,82 @@ async def _anthropic_json(cfg: LlmConfig, system: str, user: str, *, timeout: fl
         resp.raise_for_status()
         blocks = resp.json().get("content") or []
         return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+
+
+# ─── Claude Code (local CLI, user's subscription — no API key) ─────────────
+
+# Map our generic model field onto a Claude alias the CLI understands. Anything
+# unrecognised (e.g. a leftover "gemma3:1b" from another provider) → sonnet.
+_CLAUDE_CODE_MODELS = {"opus", "sonnet", "haiku"}
+_CLAUDE_BUDGET_USD = "1.0"  # safety cap per summary call
+
+
+class ClaudeCodeError(Exception):
+    """Claude Code CLI missing, errored, or returned unparseable output."""
+
+
+async def _claude_code_json(
+    cfg: LlmConfig, system: str, user: str, *, timeout: float, schema: dict[str, Any]
+) -> str:
+    """Structured JSON via the local `claude` CLI (the user's subscription).
+
+    Runs `claude -p` headless and asks for ONLY a JSON object matching `schema`.
+    `claude -p --output-format json` wraps the agent's final turn in a result
+    envelope; the JSON we want is that envelope's ``result`` string. (We rely on
+    a strict prompt rather than `--json-schema`, which routes data into the agent
+    transcript instead of ``result``.)
+    """
+    claude = shutil.which("claude")
+    if not claude:
+        raise ClaudeCodeError(
+            "Claude Code (`claude`) isn't installed or isn't on PATH. Install it "
+            "from https://docs.claude.com/claude-code, or pick another provider "
+            "in Settings → Summary."
+        )
+
+    model = cfg.model if cfg.model in _CLAUDE_CODE_MODELS else "sonnet"
+    prompt = (
+        f"{system}\n\n{user}\n\n"
+        "Output ONLY a single JSON object matching this JSON Schema. No prose, no "
+        "markdown, no code fences — just the raw JSON.\n"
+        f"JSON Schema:\n{json.dumps(schema)}"
+    )
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            claude,
+            "-p",
+            prompt,
+            "--output-format",
+            "json",
+            "--model",
+            model,
+            "--no-session-persistence",
+            "--max-budget-usd",
+            _CLAUDE_BUDGET_USD,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError as exc:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        raise ClaudeCodeError(f"Claude Code timed out after {timeout:.0f}s") from exc
+    except OSError as exc:
+        raise ClaudeCodeError(f"Claude Code failed to start: {exc}") from exc
+
+    if proc.returncode != 0:
+        err = stderr_b.decode(errors="replace")[:300]
+        raise ClaudeCodeError(f"Claude Code exited {proc.returncode}: {err}")
+
+    # The wrapper JSON: {"type":"result","result":"<the model's text>", ...}.
+    try:
+        envelope = json.loads(stdout_b.decode(errors="replace"))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ClaudeCodeError("Claude Code returned non-JSON output") from exc
+    if envelope.get("is_error"):
+        raise ClaudeCodeError(f"Claude Code reported an error: {envelope.get('result')}")
+    return str(envelope.get("result", ""))
 
 
 # Convenience re-export so callers can build messages without importing _Msg.
