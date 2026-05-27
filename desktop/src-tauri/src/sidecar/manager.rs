@@ -175,6 +175,15 @@ impl SidecarManager {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
+        // Windows: don't pop a console window for the bundled sidecar.exe.
+        // CREATE_NO_WINDOW (0x0800_0000) — same as Meetily's child processes.
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
         if let Some(dir) = &opts.working_dir {
             cmd.current_dir(dir);
         }
