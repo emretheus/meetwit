@@ -31,7 +31,6 @@ env_logger = "0.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 dirs = "5"
 once_cell = "1"
-nix = { version = "0.29", features = ["signal"] }
 cpal = "0.15"
 hound = "3"
 parking_lot = "0.12"
@@ -39,20 +38,40 @@ rubato = "0.15"
 # Mic loudness normalization (EBU R128 / -23 LUFS), ported from Meetily's
 # enhancement pipeline so hot/quiet/clipped mics still transcribe.
 ebur128 = "0.1"
-whisper-rs = { version = "0.13", default-features = false, features = ["metal", "coreml"] }
 # (Silero/ONNX VAD removed: ort 2.0-rc returned zero speech detections on real
 # audio in release builds. ASR now uses an RMS energy VAD — see asr/streamer.rs.)
 sha2 = "0.10"
 tokio-stream = "0.1"
 futures-util = "0.3"
-# Calendar OAuth (ADR-0004): Keychain for the refresh token, base64url for PKCE,
-# rand for the code_verifier + CSRF state nonce.
-keyring = { version = "3", features = ["apple-native"] }
+# Calendar OAuth (ADR-0004): base64url for PKCE, rand for the code_verifier +
+# CSRF state nonce. The keyring crate (platform Keychain/Credential-Manager) is
+# declared per-platform below with its native backend feature.
 base64 = "0.22"
 rand = "0.8"
 serde_urlencoded = "0.7"
-# Auto-detect meetings (ADR-0005): native macOS notification nudges.
+# Auto-detect meetings (ADR-0005): native OS notification nudges.
 tauri-plugin-notification = "2"
+# Cross-platform native file dialogs (open/save) — replaces the macOS-only
+# `osascript` pickers so the same code works on Windows/Linux.
+rfd = "0.15"
+
+# ─── macOS: Apple GPU/ML acceleration + Keychain ───────────────────────────
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.13", default-features = false, features = ["metal", "coreml"] }
+keyring = { version = "3", features = ["apple-native"] }
+# Unix signal handling for cooperative sidecar shutdown (SIGTERM → SIGKILL).
+nix = { version = "0.29", features = ["signal"] }
+
+# ─── Windows: Vulkan GPU acceleration (Meetily's Windows default) + Credential Manager ───
+[target.'cfg(target_os = "windows")'.dependencies]
+whisper-rs = { version = "0.13", default-features = false, features = ["vulkan"] }
+keyring = { version = "3", features = ["windows-native"] }
+
+# ─── Linux: CPU whisper + Secret Service ───────────────────────────────────
+[target.'cfg(target_os = "linux")'.dependencies]
+whisper-rs = { version = "0.13", default-features = false }
+keyring = { version = "3", features = ["linux-native"] }
+nix = { version = "0.29", features = ["signal"] }
 
 [features]
 default = ["custom-protocol"]
