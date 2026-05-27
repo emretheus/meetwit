@@ -117,6 +117,11 @@ Release build — macOS `.dmg`, or Windows `.msi` + `.exe`:
 Issues and pull requests are welcome. Please open an issue to discuss larger
 changes before starting.
 
+## Legal
+
+- [Privacy Policy](./PRIVACY.md)
+- [Terms of Service](./TERMS.md)
+
 ## License
 
 [MIT](./LICENSE).
