@@ -1,0 +1,43 @@
+name: Deploy site (GitHub Pages)
+
+# Publishes the marketing/legal site in `site/` to GitHub Pages (meetwit.xyz).
+# Uses the GitHub Actions Pages source so we can serve from the `site/`
+# subfolder — the "Deploy from a branch" option only allows / or /docs.
+#
+# One-time setup: repo Settings → Pages → Source = "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Allow this workflow to publish a Pages deployment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One live deployment at a time; let an in-progress run finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Upload site/ as the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
