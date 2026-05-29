@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  TerminalSquare,
   Type,
   Wand2,
 } from 'lucide-react';
@@ -50,6 +51,8 @@ import { TwoPaneSplitter } from '@/components/TwoPaneSplitter';
 import { ActionItemsTable } from '@/components/ActionItemsTable';
 import { MeetingCopilot } from '@/components/MeetingCopilot';
 import { LiveMeetingView } from '@/components/LiveMeetingView';
+import { TerminalPanel } from '@/components/TerminalPanel';
+import { getPrefs } from '@/lib/prefs';
 import { Tabs } from '@/components/ui';
 import { useMeetingStore, useRunning } from '@/stores/meetingStore';
 import { formatTime, groupSegmentsIntoTurns } from '@/lib/transcript';
@@ -134,7 +137,10 @@ function SummaryView({ id }: { id: string }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [highlightId, setHighlightId] = useState<number | null>(null);
   const [savedHint, setSavedHint] = useState<string | null>(null);
-  const [rightTab, setRightTab] = useState<'summary' | 'copilot'>('summary');
+  const [rightTab, setRightTab] = useState<'summary' | 'copilot' | 'claude'>('summary');
+  // Opt-in embedded "Claude Code" terminal — same gate as the live view. Read
+  // once on mount; toggling the pref takes effect on next open.
+  const [claudeCodeEnabled] = useState(() => getPrefs().claudeCodeEnabled);
   const { ready: backendReady } = useBackendReady();
 
   const transcriptListRef = useRef<HTMLDivElement | null>(null);
@@ -575,6 +581,15 @@ function SummaryView({ id }: { id: string }) {
                 options={[
                   { value: 'summary', label: 'Summary', icon: <Sparkles className="h-3 w-3" /> },
                   { value: 'copilot', label: 'Copilot', icon: <FileText className="h-3 w-3" /> },
+                  ...(claudeCodeEnabled
+                    ? [
+                        {
+                          value: 'claude' as const,
+                          label: 'Claude Code',
+                          icon: <TerminalSquare className="h-3 w-3" />,
+                        },
+                      ]
+                    : []),
                 ]}
               />
               <ToolbarSpacer />
@@ -606,7 +621,7 @@ function SummaryView({ id }: { id: string }) {
               )}
             </Toolbar>
 
-            {rightTab === 'summary' ? (
+            {rightTab === 'summary' && (
               <div className="flex-1 overflow-y-auto bg-zinc-50/40 px-7 py-6">
                 <SummaryBody
                   meetingId={meeting.id}
@@ -621,8 +636,19 @@ function SummaryView({ id }: { id: string }) {
                   busy={busy}
                 />
               </div>
-            ) : (
-              <MeetingCopilot meetingId={meeting.id} />
+            )}
+            {rightTab === 'copilot' && <MeetingCopilot meetingId={meeting.id} />}
+            {/* Finished meeting: spawn Claude Code primed for THIS meeting,
+                preferring the saved summary (live={false}). Unlike the live view
+                this isn't the app-level persistent host — switching tabs kills
+                the PTY and reopening respawns it, which is fine post-recording. */}
+            {claudeCodeEnabled && rightTab === 'claude' && (
+              <TerminalPanel
+                autoClaude
+                meetingId={meeting.id}
+                meetingTitle={meeting.title ?? null}
+                live={false}
+              />
             )}
           </>
         }

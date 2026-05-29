@@ -51,11 +51,14 @@ export function TerminalPanel({
   autoClaude = true,
   meetingId = null,
   meetingTitle = null,
+  live = true,
 }: {
   autoClaude?: boolean;
   /** Active meeting — primed into the Claude session so it knows which one. */
   meetingId?: string | null;
   meetingTitle?: string | null;
+  /** True = meeting still recording; false = finished (tunes the priming prompt). */
+  live?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   // Guards against React 18 StrictMode double-invoking the effect in dev (which
@@ -88,7 +91,7 @@ export function TerminalPanel({
     fit.fit();
 
     void (async () => {
-      sessionId = await ptySpawn(term.cols, term.rows, autoClaude, meetingId, meetingTitle);
+      sessionId = await ptySpawn(term.cols, term.rows, autoClaude, meetingId, meetingTitle, live);
       if (disposed) {
         void ptyKill(sessionId);
         return;
@@ -123,7 +126,7 @@ export function TerminalPanel({
       if (sessionId) void ptyKill(sessionId);
       term.dispose();
     };
-  }, [autoClaude, meetingId, meetingTitle]);
+  }, [autoClaude, meetingId, meetingTitle, live]);
 
   return (
     <div className="flex h-full flex-col bg-white">
