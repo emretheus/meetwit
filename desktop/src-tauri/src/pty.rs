@@ -105,13 +105,16 @@ fn shell_quote(s: &str) -> String {
 /// with an initial prompt that primes the *current meeting* as context (so the
 /// session can answer "summarize so far" without first guessing which meeting).
 /// If `claude` isn't installed, the `command -v` guard prints guidance instead.
-fn bootstrap_script(meeting_id: Option<&str>, meeting_title: Option<&str>) -> String {
+fn bootstrap_script(meeting_id: Option<&str>, meeting_title: Option<&str>, live: bool) -> String {
     let mcp = mcp_command();
 
     // Build the initial prompt that orients Claude to the active meeting and the
     // meetwit MCP tools. Single-quoted for the shell; escape embedded quotes.
+    // The guidance differs by state: during a LIVE recording the saved summary
+    // usually doesn't exist yet, so read the transcript; for a FINISHED meeting
+    // the saved summary is the right starting point.
     let prompt = match meeting_id {
-        Some(id) => {
+        Some(id) if live => {
             let title = meeting_title.unwrap_or("Untitled meeting");
             format!(
                 "You're assisting during a LIVE, in-progress meeting in Meetwit. The active \
@@ -123,6 +126,21 @@ fn bootstrap_script(meeting_id: Option<&str>, meeting_title: Option<&str>) -> St
                  get_summary first (only use get_summary if the user explicitly asks for the saved \
                  post-meeting summary). Other tools: list_decisions(\"{id}\"), \
                  list_action_items(\"{id}\"), and search_documents for the user's indexed docs.\n\n\
+                 Briefly confirm you're connected and ready, then wait for the user's question."
+            )
+        }
+        Some(id) => {
+            let title = meeting_title.unwrap_or("Untitled meeting");
+            format!(
+                "You're assisting with a FINISHED meeting in Meetwit. The meeting is \"{title}\" \
+                 (id: {id}). Use the `meetwit` MCP tools for THIS meeting; don't ask which \
+                 meeting — it's this one.\n\n\
+                 The meeting is over, so its data is complete. For \"summarize\" / \"recap\" / \
+                 \"what were the takeaways\" type questions, start with get_summary(\"{id}\"); if \
+                 no saved summary exists yet, fall back to get_transcript(\"{id}\"). For detail or \
+                 verbatim quotes, read get_transcript(\"{id}\"). Other tools: \
+                 list_decisions(\"{id}\"), list_action_items(\"{id}\"), and search_documents for \
+                 the user's indexed docs.\n\n\
                  Briefly confirm you're connected and ready, then wait for the user's question."
             )
         }
@@ -148,6 +166,9 @@ fn bootstrap_script(meeting_id: Option<&str>, meeting_title: Option<&str>) -> St
     )
 }
 
+// Args mirror the JS bridge (Tauri maps them by name), so they stay flat
+// rather than bundled into a struct.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn pty_spawn(
     app: AppHandle,
@@ -157,6 +178,7 @@ pub fn pty_spawn(
     auto_claude: bool,
     meeting_id: Option<String>,
     meeting_title: Option<String>,
+    live: bool,
 ) -> Result<String, String> {
     spawn_inner(
         app,
@@ -166,10 +188,12 @@ pub fn pty_spawn(
         auto_claude,
         meeting_id,
         meeting_title,
+        live,
     )
     .map_err(|e| e.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_inner(
     app: AppHandle,
     state: &AppState,
@@ -178,6 +202,7 @@ fn spawn_inner(
     auto_claude: bool,
     meeting_id: Option<String>,
     meeting_title: Option<String>,
+    live: bool,
 ) -> Result<String> {
     let session_id = format!("pty-{}", uuid_like());
     let pty_system = NativePtySystem::default();
@@ -246,7 +271,7 @@ fn spawn_inner(
 
     // Kick off the bootstrap (register MCP + launch claude with meeting context).
     if auto_claude {
-        let script = bootstrap_script(meeting_id.as_deref(), meeting_title.as_deref());
+        let script = bootstrap_script(meeting_id.as_deref(), meeting_title.as_deref(), live);
         let _ = session.writer.write_all(script.as_bytes());
         let _ = session.writer.flush();
     }

@@ -322,13 +322,16 @@ export async function apikeyDelete(provider: string): Promise<void> {
 // ─── Embedded terminal — the "Claude Code" tab ──────────────────────────
 
 /** Open a PTY (sized cols×rows). When autoClaude, bootstraps + launches claude
- *  primed with the active meeting (id + title) as context. Returns a session id. */
+ *  primed with the meeting (id + title) as context. `live` tunes the priming
+ *  prompt: true = recording in progress (read transcript), false = finished
+ *  meeting (prefer the saved summary). Returns a session id. */
 export async function ptySpawn(
   cols: number,
   rows: number,
   autoClaude: boolean,
   meetingId: string | null,
   meetingTitle: string | null,
+  live = true,
 ): Promise<string> {
   return invoke<string>('pty_spawn', {
     cols,
@@ -336,6 +339,7 @@ export async function ptySpawn(
     autoClaude,
     meetingId,
     meetingTitle,
+    live,
   });
 }
 

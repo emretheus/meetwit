@@ -5,6 +5,20 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-05-30
+
+### Added
+- **Claude Code on finished meetings**: the embedded Claude Code terminal (opt-in)
+  is now available on the post-meeting summary view, not just during a live
+  recording. It's primed for that specific meeting and prefers the saved summary,
+  falling back to the transcript.
+
+### Fixed
+- The Claude Code session's priming prompt was hardcoded as a "LIVE, in-progress
+  meeting" and steered Claude away from `get_summary`. It's now state-aware:
+  live recordings read the transcript; finished meetings start from the saved
+  summary.
+
 ## [1.0.0] — 2026-05-26
 
 First public release. Privacy-first, local-first AI meeting assistant for
@@ -78,6 +92,7 @@ First scaffold + V1 implementation. Not yet user-tested on hardware variants.
 - Auto-update deferred to V1.1
 - API keys (BYOK) stored in SQLite plain text — Keychain migration in V1.1
 
-[Unreleased]: https://github.com/emretheus/meetwit/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/emretheus/meetwit/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/emretheus/meetwit/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/emretheus/meetwit/compare/v0.0.1...v1.0.0
 [0.0.1]: https://github.com/emretheus/meetwit/releases/tag/v0.0.1
