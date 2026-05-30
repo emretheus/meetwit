@@ -43,6 +43,11 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # Google Calendar OAuth client (ADR-0004). Read at build time by the Rust
+      # core's calendar::oauth_client_id(); absent → "Calendar not configured in
+      # this build" and the Connect button stays disabled.
+      MEETWIT_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.MEETWIT_GOOGLE_OAUTH_CLIENT_ID }}
+      MEETWIT_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.MEETWIT_GOOGLE_OAUTH_CLIENT_SECRET }}
 
     steps:
       - uses: actions/checkout@v4

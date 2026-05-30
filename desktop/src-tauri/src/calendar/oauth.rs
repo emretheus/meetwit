@@ -23,12 +23,24 @@ const USERINFO_ENDPOINT: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
 /// How long we wait for the user to complete consent before giving up.
 const CONSENT_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Read the OAuth client id from the environment. Absent → calendar is "not
-/// configured in this build" and the Connect button is disabled (ADR §7).
+/// Read a build-or-runtime config value. Prefers the value baked in at COMPILE
+/// time (`option_env!`) so a shipped `.app` — launched from Finder, which
+/// inherits no shell env — has the credential. Falls back to the RUNTIME
+/// environment so `pnpm tauri:dev` (or a manual `MEETWIT_…=… ./meetwit`) still
+/// works without a rebuild. Empty/whitespace counts as absent.
+macro_rules! build_or_runtime_env {
+    ($name:literal) => {{
+        option_env!($name)
+            .map(str::to_owned)
+            .or_else(|| std::env::var($name).ok())
+            .filter(|s| !s.trim().is_empty())
+    }};
+}
+
+/// The OAuth client id. Absent → calendar is "not configured in this build"
+/// and the Connect button is disabled (ADR §7).
 pub fn oauth_client_id() -> Option<String> {
-    std::env::var("MEETWIT_GOOGLE_OAUTH_CLIENT_ID")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
+    build_or_runtime_env!("MEETWIT_GOOGLE_OAUTH_CLIENT_ID")
 }
 
 /// Read the OAuth client secret. Google's token endpoint requires this even for
@@ -37,9 +49,7 @@ pub fn oauth_client_id() -> Option<String> {
 /// Desktop-client secret is not truly confidential (Google embeds it in
 /// distributed tools like gcloud); PKCE is the actual security boundary.
 pub fn oauth_client_secret() -> Option<String> {
-    std::env::var("MEETWIT_GOOGLE_OAUTH_CLIENT_SECRET")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
+    build_or_runtime_env!("MEETWIT_GOOGLE_OAUTH_CLIENT_SECRET")
 }
 
 /// Result of a completed connect flow.

@@ -3,6 +3,12 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
+    // Google Calendar OAuth client is baked in at compile time via option_env!
+    // (see calendar::oauth). Tell Cargo to rebuild when the values change, so a
+    // cached build never ships stale/empty credentials.
+    println!("cargo:rerun-if-env-changed=MEETWIT_GOOGLE_OAUTH_CLIENT_ID");
+    println!("cargo:rerun-if-env-changed=MEETWIT_GOOGLE_OAUTH_CLIENT_SECRET");
+
     // System audio on macOS is captured through a Swift Core Audio process tap.
     // Only compile/link it when actually targeting macOS — on Windows/Linux the
     // system-audio path uses a native backend (see src/audio/system.rs) and
